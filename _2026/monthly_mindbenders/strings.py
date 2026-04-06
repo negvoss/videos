@@ -21,9 +21,10 @@ class Strings(InteractiveScene):
     box_dims = (4.0, 3.0, 2.0)
 
     def construct(self):
+        # Set up the scene
         frame = self.frame
         n = 10
-        n_box_joins = 4
+        n_box_joins = 10
 
         join_seq = self.compute_join_sequence(n)
         join_seq = self.ensure_box_self_loop(join_seq, n_box_joins)
@@ -32,9 +33,15 @@ class Strings(InteractiveScene):
         strings, end_dots = self.get_floor_strings(n)
         bh = self.box_dims[2]
 
-        frame.reorient(20, 65)
-        self.add(strings, end_dots)
-        self.play(FadeIn(box), run_time=0.5)
+        # Drop the strings into the box
+        self.camera.frame.save_state()
+        frame.reorient(-18, 74, 0)
+        self.add(box, end_dots, strings)
+        self.play(
+            self.camera.frame.animate(run_time = 5).reorient(20, 65),
+            AnimationGroup(*[FadeIn(dot) for dot in end_dots], lag_ratio = 0.2),
+            AnimationGroup(*[FadeIn(string) for string in strings], lag_ratio = 0.4)
+        )
 
         drop_anims = []
         for i in range(n):
@@ -46,20 +53,18 @@ class Strings(InteractiveScene):
                         rate_func=rush_into,
                     )
                 )
+
         self.play(
             *drop_anims,
             frame.animate.reorient(-10, 65),
             run_time=0.6 + (n - 1) * 0.15,
         )
-        self.play(frame.animate.reorient(15, 55), run_time=1.5)
+
+        # View the strings up close
+        self.play(frame.animate.reorient(-9, 61, 0, (np.float32(-0.01), np.float32(-0.34), np.float32(-1.28)), 3.60), run_time=2)
         self.wait(0.5)
 
-        self.remove(strings, end_dots)
-        for i in range(n):
-            self.add(strings[i])
-            self.add(end_dots[2 * i])
-            self.add(end_dots[2 * i + 1])
-
+        # Run the experiment
         piece_map = {}
         for i in range(n):
             piece = {
@@ -96,9 +101,9 @@ class Strings(InteractiveScene):
             d1 = pa["dots"][e1]
             d2 = pb["dots"][e2]
 
-            self.highlight_endpoints(d1, d2)
+            self.play(AnimationGroup(Flash(d1, color = BLUE), Flash(d2, color = BLUE)))
 
-            lift_height = bh + 1.0
+            lift_height = bh - 1
             lift_anims = []
             seen_mobs = set()
             pieces_to_lift = [(pa, e1)]
@@ -121,7 +126,7 @@ class Strings(InteractiveScene):
                         lift_height,
                     )
                 )
-            self.play(*lift_anims, run_time=1.0)
+            self.play(*lift_anims, run_time=1.5)
             remove_updaters(dot_updaters)
             self.wait(0.3)
 
@@ -225,6 +230,8 @@ class Strings(InteractiveScene):
                 piece_map.pop(e1, None)
                 piece_map.pop(e2, None)
 
+
+        # Fade out the box and the strings
         all_box_mobs = Group(box)
         seen = set()
         for piece in piece_map.values():
@@ -239,76 +246,56 @@ class Strings(InteractiveScene):
 
         self.play(
             FadeOut(all_box_mobs),
-            frame.animate.reorient(0, 0).set_height(8),
             run_time=1.5,
         )
+        self.camera.frame.restore()
 
-        chains_data = self.get_chain_state(n, join_seq[:n_box_joins])
-        self.init_organized(chains_data, base_height=0.5)
-
-        self.play(
-            LaggedStartMap(
-                FadeIn,
-                VGroup(*(c["line"] for c in self.org_chains)),
-                lag_ratio=0.08,
-            ),
-            LaggedStartMap(
-                FadeIn,
-                VGroup(*(d for c in self.org_chains for d in c["dots"].values())),
-                lag_ratio=0.04,
-            ),
-            run_time=1.5,
-        )
-
-        loop_counter = Integer(0, font_size=60)
-        loop_label = Text("Loops:", font_size=36)
-        counter_group = VGroup(loop_label, loop_counter)
-        counter_group.arrange(RIGHT, buff=0.3)
-        counter_group.to_corner(UR)
-        self.play(FadeIn(counter_group))
-
-        for k in range(n_box_joins, n):
-            e1, e2, forms_loop, _ = join_seq[k]
-            self.animate_organized_join(e1, e2, forms_loop, loop_counter)
-
-        self.wait(2)
-
-        old_mobs = VGroup(
-            *(c["line"] for c in self.org_chains),
-            *(d for c in self.org_chains for d in c["dots"].values()),
-            *self.org_loops,
-            counter_group,
-        )
-        self.play(FadeOut(old_mobs), run_time=1.0)
-
+        # Simplify the view and set up the experiment with 50 strings
         n2 = 50
         join_seq_50 = self.compute_join_sequence(n2)
         chains_50 = self.get_chain_state(n2, [])
 
         self.init_organized(
             chains_50,
-            base_height=0.08,
+            base_height=0.4,
             x_range=(-6.5, 6.5),
-            dot_radius=0.035,
-            stroke_width=2,
+            dot_radius=0.04,
+            stroke_width=4,
         )
 
         all_50_lines = VGroup(*(c["line"] for c in self.org_chains))
         all_50_dots = VGroup(*(d for c in self.org_chains for d in c["dots"].values()))
 
-        counter_50 = Integer(0, font_size=60)
-        label_50 = Text("Loops:", font_size=36)
+        font_size = 80
+        counter_50 = Integer(0, font_size=font_size)
+        label_50 = Text("Loops:", font_size=font_size)
         cg_50 = VGroup(label_50, counter_50)
         cg_50.arrange(RIGHT, buff=0.3)
-        cg_50.to_corner(UR)
+        cg_50.to_edge(DOWN).fix_in_frame()
 
+        sorted_by_center = sorted(self.org_chains, key = lambda c: abs(c["line"].get_x()))
+        VGroup(*[VGroup(c["line"], VGroup(*c["dots"].values())) for c in sorted_by_center]).to_edge(UP, buff = 1)
         self.play(
-            FadeIn(all_50_lines),
-            FadeIn(all_50_dots),
-            FadeIn(cg_50),
-            run_time=1.0,
-        )
+            AnimationGroup(
+                AnimationGroup(*[
+                    AnimationGroup(
+                        GrowFromCenter(c["line"]),
+                        AnimationGroup(*[FadeIn(d) for d in c["dots"].values()])
+                    , lag_ratio = 0.4)
+                    for c in sorted_by_center
+                ], lag_ratio = 0.01)
+                # FadeIn(cg_50, shift = UP)
+            , lag_ratio = 0.4)
+        , run_time=2)
 
+        # Show that there are 50 strings
+        brace = Brace(all_50_lines, DOWN)
+        fiftyStringsText = TexText("50 Strings", font_size = 80).set_color(BLUE).next_to(brace, DOWN)
+        self.play(AnimationGroup(GrowFromEdge(brace, UP), Write(fiftyStringsText), lag_ratio = 0.6))
+        self.wait(0.5)
+        self.play(FadeOut(brace), FadeOut(fiftyStringsText))
+
+        # Run the experiment with 50 strings
         for k in range(n2):
             e1, e2, forms_loop, _ = join_seq_50[k]
             self.animate_organized_join(
@@ -316,7 +303,7 @@ class Strings(InteractiveScene):
                 e2,
                 forms_loop,
                 counter_50,
-                fast=False,
+                fast=False
             )
 
         self.wait(3)
@@ -377,10 +364,9 @@ class Strings(InteractiveScene):
         d2 = cb["dots"][e2]
 
         main_rt = 0.25 if fast else 0.5
-        lift_y = 1.5
 
         if not fast:
-            self.highlight_endpoints(d1, d2)
+            self.play(AnimationGroup(Flash(d1, color = BLUE), Flash(d2, color = BLUE)))
 
         if forms_loop:
             self.org_loop_count += 1
@@ -479,13 +465,13 @@ class Strings(InteractiveScene):
 
             if not fast:
                 mid_x = (d1.get_center()[0] + d2.get_center()[0]) / 2
-                raised_y = self.org_y + lift_y
 
                 h_a = abs(ca["line"].get_end()[1] - ca["line"].get_start()[1])
                 h_b = abs(cb["line"].get_end()[1] - cb["line"].get_start()[1])
 
-                meet_y = raised_y
-                meet_point = np.array([mid_x, meet_y, 0])
+                meet_y = 0
+                # meet_point = np.array([mid_x, meet_y, 0])
+                meet_point = np.array([0, meet_y, 0])
 
                 a_bot = meet_y
                 a_top = meet_y + h_a
@@ -495,32 +481,42 @@ class Strings(InteractiveScene):
                 b_top = meet_y
                 db_y = b_bot
 
+                d1_target = meet_point
+                d2_target = meet_point
+                da_target = np.array([meet_point[0], da_y, 0])
+                db_target = np.array([meet_point[0], db_y, 0])
+                if d1.get_y() > ca["line"].get_y() and d2.get_y() < cb["line"].get_y():
+                    a_top, a_bot = a_bot, a_top
+                    b_top, b_bot = b_bot, b_top
+                    d1_target, d2_target = d2_target, d1_target
+                    da_target, db_target = db_target, da_target
                 ca["line"].generate_target()
                 ca["line"].target.put_start_and_end_on(
-                    np.array([mid_x, a_bot, 0]),
-                    np.array([mid_x, a_top, 0]),
+                    np.array([meet_point[0], a_bot, 0]),
+                    np.array([meet_point[0], a_top, 0]),
                 )
                 cb["line"].generate_target()
                 cb["line"].target.put_start_and_end_on(
-                    np.array([mid_x, b_bot, 0]),
-                    np.array([mid_x, b_top, 0]),
+                    np.array([meet_point[0], b_bot, 0]),
+                    np.array([meet_point[0], b_top, 0]),
                 )
 
+                ca["line"].add_updater(lambda l: l.put_start_and_end_on(d1.get_center(), da.get_center()))
+                cb["line"].add_updater(lambda l: l.put_start_and_end_on(d2.get_center(), db.get_center()))
                 self.play(
                     MoveToTarget(ca["line"]),
                     MoveToTarget(cb["line"]),
-                    d1.animate.move_to(meet_point),
-                    d2.animate.move_to(meet_point),
-                    da.animate.move_to(np.array([mid_x, da_y, 0])),
-                    db.animate.move_to(np.array([mid_x, db_y, 0])),
-                    run_time=0.4,
+                    d1.animate(path_arc = PI*0.5).move_to(d1_target),
+                    d2.animate(path_arc = PI*0.5).move_to(d2_target),
+                    da.animate(path_arc = PI*0.5).move_to(da_target),
+                    db.animate(path_arc = PI*0.5).move_to(db_target),
+                    run_time=1.2,
                 )
 
                 connected = Line(
-                    np.array([mid_x, b_bot, 0]),
-                    np.array([mid_x, a_top, 0]),
+                    VGroup(ca["line"], cb["line"]).get_top(),
+                    VGroup(ca["line"], cb["line"]).get_bottom()
                 ).set_stroke(ORANGE, self.org_sw)
-
                 self.remove(ca["line"], cb["line"])
                 self.add(connected)
 
@@ -528,18 +524,17 @@ class Strings(InteractiveScene):
                     Flash(meet_point, color=YELLOW, line_length=0.1, flash_radius=0.2),
                     FadeOut(d1),
                     FadeOut(d2),
-                    run_time=0.25,
+                    run_time=0.7,
                 )
 
                 connected.generate_target()
                 connected.target.put_start_and_end_on(
-                    np.array([xn, bn, 0]),
                     np.array([xn, tn, 0]),
-                )
+                    np.array([xn, bn, 0]),
+                ).to_edge(UP, buff = 1)
                 anims = [
                     MoveToTarget(connected),
-                    da.animate.move_to(np.array([xn, tn, 0])),
-                    db.animate.move_to(np.array([xn, bn, 0])),
+                    VGroup(da, db).animate.set_x(xn).to_edge(UP, buff = 1)
                 ]
                 self._add_redistribute_anims(anims, xs, skip=nc)
                 self.play(*anims, run_time=main_rt)
@@ -562,18 +557,10 @@ class Strings(InteractiveScene):
             if chain is skip:
                 continue
             x = xs[i]
-            h = self.org_bh * chain["size"]
-            t = self.org_y + h / 2
-            b = self.org_y - h / 2
             chain["line"].generate_target()
-            chain["line"].target.put_start_and_end_on(
-                np.array([x, b, 0]),
-                np.array([x, t, 0]),
-            )
+            chain["line"].target.set_x(x).to_edge(UP, buff = 1)
             anims.append(MoveToTarget(chain["line"]))
-            for j, eid in enumerate(chain["ends"]):
-                pos = np.array([x, t if j == 0 else b, 0])
-                anims.append(chain["dots"][eid].animate.move_to(pos))
+            anims.append(VGroup(*[chain["dots"][eid] for eid in chain["ends"]]).animate.set_x(x).to_edge(UP, buff = 1))
 
     def _chain_xs(self, n):
         if n <= 0:
@@ -702,6 +689,7 @@ class Strings(InteractiveScene):
                 m.set_opacity(1 - smooth(a))
 
             return ring, UpdateFromAlphaFunc(ring, update)
+        # return AnimationGroup(Flash(d1, color = BLUE), Flash(d2, color = BLUE))
 
         ring1, anim1 = make_ring_anim(d1)
         ring2, anim2 = make_ring_anim(d2)
@@ -837,3 +825,8 @@ class Strings(InteractiveScene):
             end_dots.add(dot2)
 
         return strings, end_dots
+
+class DrawArrowDown(Scene):
+    def construct(self):
+        # Draw the arrow
+        self.play(GrowArrow(Arrow(UP, DOWN).set_color(TEAL)))
