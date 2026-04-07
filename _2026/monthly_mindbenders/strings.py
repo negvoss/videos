@@ -269,7 +269,7 @@ class Strings(InteractiveScene):
         font_size = 80
         counter_50 = Integer(0, font_size=font_size)
         label_50 = Text("Loops:", font_size=font_size)
-        cg_50 = VGroup(label_50, counter_50)
+        cg_50 = VGroup(label_50, counter_50).set_opacity(0)
         cg_50.arrange(RIGHT, buff=0.3)
         cg_50.to_edge(DOWN).fix_in_frame()
 
@@ -380,7 +380,7 @@ class Strings(InteractiveScene):
 
             circle = Circle(radius=radius)
             circle.set_stroke(color, 3)
-            circle.move_to(np.array([lx, self.org_loop_y, 0]))
+            circle.to_edge(DOWN, buff = 0)
 
             self.org_chains.remove(ca)
             del self.org_end_map[e1]
