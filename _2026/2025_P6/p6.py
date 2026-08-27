@@ -2269,3 +2269,61 @@ class IMODetails(InteractiveScene):
         imo_text_shortened.generate_target()
         VGroup(year_label, imo_text_shortened.target).arrange(buff = 1.7).match_y(imo_text_shortened)
         self.play(MoveToTarget(imo_text_shortened), FadeIn(year_label, shift = RIGHT*0.3), run_time = 2)
+
+
+class Timeline(NumberLine):
+    def __init__(self, start_year, end_year, *args, **kwargs):
+        super().__init__(
+            x_range = (start_year, end_year, 1/12),
+            unit_size = 4,
+            tick_size=0.1,
+            longer_tick_multiple=2,
+            big_tick_spacing=1
+        )
+
+        self.year_labels = self.add_numbers(
+            range(start_year, end_year),
+            group_with_commas=False,
+        )
+        def update_year_label(label):
+            year = label.get_value()
+            label.next_to(self.n2p(year), DOWN, 0.4)
+            focal_value = np.exp(-0.2 * label.get_x()**2)
+            label.set_height(
+                0.25 + 0.25 * focal_value,
+                about_edge=UP
+            )
+            label.set_fill(opacity=(0.5 + 0.5 * focal_value))
+        for label in self.year_labels:
+            label.add_updater(update_year_label)
+
+        self.center()
+
+    def center_on_year(self, year):
+        return self.shift(self.n2p(year)[0] * LEFT)
+
+
+class AIEvolution(InteractiveScene):
+    def construct(self):
+        # Add the timeline
+        timeline = Timeline(2017, 2030).shift(DOWN*2).center_on_year(2026)
+        self.add(timeline)
+
+        # Center it on the year 2023
+        self.play(timeline.animate.center_on_year(2023), run_time = 2)
+        self.wait(1)
+
+        # Center it on the year 2024
+        self.play(timeline.animate.center_on_year(2024), run_time = 2)
+        self.wait(1)
+
+        # Center it on the year 2025
+        self.play(timeline.animate.center_on_year(2025), run_time = 2)
+        self.wait(1)
+
+        # Center it on the year 2026
+        self.play(timeline.animate.center_on_year(2026), run_time = 2)
+        self.wait(1)
+
+        # Go back to 2025
+        self.play(timeline.animate.center_on_year(2025), run_time = 1.5)
