@@ -2264,11 +2264,108 @@ class IMODetails(InteractiveScene):
         )
         self.wait(2)
 
-        # Change the label to "2025 IMO"
-        year_label = TexText("2025").match_height(imo_text_shortened).set_stroke(width = 7, color = BLACK, behind = True)
+        # Change the label to "2025 IMO" and arrange the problems on the left
+        year_label = TexText(
+            "2025"
+        ).match_height(
+            imo_text_shortened
+        ).set_stroke(
+            width = 7, color = BLACK, behind = True
+        ).set_opacity(
+            0
+        ).next_to(
+            imo_text_shortened, LEFT, buff = 0.1
+        )
+        year_label.generate_target()
+        year_label.target.set_opacity(1)
         imo_text_shortened.generate_target()
-        VGroup(year_label, imo_text_shortened.target).arrange(buff = 1.7).match_y(imo_text_shortened)
-        self.play(MoveToTarget(imo_text_shortened), FadeIn(year_label, shift = RIGHT*0.3), run_time = 2)
+        imo_logo.generate_target()
+        VGroup(year_label.target, imo_text_shortened.target).arrange(buff = 0.1).move_to(imo_logo.target)
+        Group(imo_logo.target, year_label.target, imo_text_shortened.target).scale(1.5).set_y(0).to_edge(RIGHT, buff = 1)
+        imo_logo.set_z_index(0)
+        imo_text_shortened.set_z_index(1)
+        year_label.set_z_index(1)
+
+        for problem in problems:
+            problem.generate_target()
+        VGroup(*[problem.target for problem in problems]).scale(0.9).arrange(DOWN, buff = 0.2).to_edge(LEFT, buff = 0.6)
+        problems[-1].target[0].set_fill(color = PURE_RED).set_stroke(width = 4, color = YELLOW)
+
+        self.play(
+            MoveToTarget(imo_text_shortened, run_time = 2),
+            MoveToTarget(imo_logo, run_time = 2),
+            MoveToTarget(year_label, run_time = 2),
+            AnimationGroup(*[
+                MoveToTarget(problem, path_arc = PI*0.3 if problem.target.get_y() > 0 else -PI*0.3)
+                for problem in problems
+            ], lag_ratio = 0.06, run_time = 2),
+            FadeOut(creatures, shift = LEFT, run_time = 1),
+            FadeOut(day1_label),
+            FadeOut(day2_label),
+            FadeOut(VGroup(hard, arrow, brutal), shift = RIGHT)
+        )
+
+        # Show scores
+        total_participants = 630
+        scores_data = [368, 253, 102, 342, 215, 6]
+        score_bars = VGroup()
+        master_bar_width_tracker = ValueTracker(0)
+        for score, problem in zip(scores_data, problems):
+            skeleton = Rectangle(
+                width = 4,
+                height = 0.5,
+                fill_opacity = 0.1,
+                fill_color = WHITE,
+                stroke_width = 3,
+                stroke_color = WHITE,
+                stroke_opacity = 1
+            ).round_corners(0.08).set_z_index(1)
+
+            def get_bar(score = score, skeleton = skeleton):
+                fraction = master_bar_width_tracker.get_value()*score/total_participants
+                return Rectangle(
+                    fill_opacity = 1,
+                    fill_color = TEAL_E,
+                    stroke_width = 0
+                ).match_height(
+                    skeleton
+                ).stretch_to_fit_width(
+                    skeleton.get_width()*fraction
+                ).move_to(
+                    skeleton
+                ).align_to(
+                    skeleton, LEFT
+                ).round_corners(min(0.08, fraction)).set_z_index(0)
+            bar = always_redraw(get_bar)
+            score_bars.add(VGroup(bar, skeleton).next_to(problem, RIGHT, buff = 0.5))
+        self.add(score_bars)
+
+        scores = VGroup(*[
+            Integer(score, font_size = 30).set_color(TEAL).next_to(bar, RIGHT)
+            for score, bar in zip(scores_data, score_bars)
+        ])
+        self.play(
+            AnimationGroup(
+                AnimationGroup(
+                    AnimationGroup(*[
+                        FadeIn(skeleton)
+                        for (_, skeleton) in score_bars
+                    ], run_time = 1),
+                    master_bar_width_tracker.animate(run_time = 2).set_value(1)
+                , lag_ratio = 0.02),
+                AnimationGroup(*[
+                    FadeIn(score)
+                    for score in scores
+                ], lag_ratio = 0.1, run_time = 2)
+            , lag_ratio = 0.2)
+        )
+        score_bars.clear_updaters()
+
+        # Draw attention to the last bar
+        arrow = Arrow(ORIGIN, LEFT*1.5).set_color(YELLOW).next_to(scores[-1], RIGHT)
+        self.play(GrowArrow(arrow))
+
+
 
 
 
