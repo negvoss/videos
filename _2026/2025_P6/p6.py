@@ -2271,59 +2271,130 @@ class IMODetails(InteractiveScene):
         self.play(MoveToTarget(imo_text_shortened), FadeIn(year_label, shift = RIGHT*0.3), run_time = 2)
 
 
-class Timeline(NumberLine):
-    def __init__(self, start_year, end_year, *args, **kwargs):
-        super().__init__(
-            x_range = (start_year, end_year, 1/12),
-            unit_size = 4,
+
+import os
+import tempfile
+from PIL import Image
+_desaturate_cache_dir = os.path.join(tempfile.gettempdir(), "manim_desaturate_cache")
+os.makedirs(_desaturate_cache_dir, exist_ok=True)
+_source_array_cache = {}  # source_path -> float64 rgb(a) array, decoded once per source
+
+def desaturate_from_source(source_path: str, alpha: float, position_ref: ImageMobject) -> ImageMobject:
+    alpha = round(float(np.clip(alpha, 0.0, 1.0)), 2)
+
+    if source_path not in _source_array_cache:
+        _source_array_cache[source_path] = np.array(Image.open(source_path)).astype(np.float64)
+    arr = _source_array_cache[source_path]
+
+    has_alpha_channel = arr.shape[-1] == 4
+    rgb = arr[..., :3]
+    gray = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
+    gray_rgb = np.stack([gray, gray, gray], axis=-1)
+    blended_rgb = (1 - alpha) * rgb + alpha * gray_rgb
+    blended = (
+        np.concatenate([blended_rgb, arr[..., 3:4]], axis=-1)
+        if has_alpha_channel else blended_rgb
+    )
+    blended = np.clip(blended, 0, 255).astype(np.uint8)
+
+    base_name = os.path.splitext(os.path.basename(source_path))[0]
+    out_path = os.path.join(_desaturate_cache_dir, f"{base_name}_{alpha:.2f}.png")
+    if not os.path.exists(out_path):
+        Image.fromarray(blended).save(out_path)
+
+    new_image_mobject = ImageMobject(out_path)
+    new_image_mobject.replace(position_ref)
+    return new_image_mobject
+
+
+
+class Timeline(Group):
+    def __init__(self, start_year, end_year, initial_year, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.number_line = NumberLine(
+            x_range=(start_year, end_year, 1/12),
+            unit_size=3.8,
             tick_size=0.1,
             longer_tick_multiple=2,
             big_tick_spacing=1
         )
-
-        self.year_labels = self.add_numbers(
+        self.add(self.number_line)
+        self.year_labels = self.number_line.add_numbers(
             range(start_year, end_year),
             group_with_commas=False,
         )
         def update_year_label(label):
             year = label.get_value()
-            label.next_to(self.n2p(year), DOWN, 0.4)
-            focal_value = np.exp(-0.2 * label.get_x()**2)
-            label.set_height(
-                0.25 + 0.25 * focal_value,
-                about_edge=UP
-            )
-            label.set_fill(opacity=(0.5 + 0.5 * focal_value))
+            label.next_to(self.number_line.n2p(year), DOWN, 0.4)
+            focal_value = np.exp(-0.1 * label.get_x()**2)
+            label.set_height(0.25 + 0.25 * focal_value, about_edge=UP)
+            label.set_fill(opacity=(0.5 + 0.5 * focal_value), color = interpolate_color(WHITE, YELLOW, focal_value**2))
         for label in self.year_labels:
             label.add_updater(update_year_label)
 
-        self.center()
+        self.images = Group()
+        self.add(self.images)
+        self._image_entries = []
+        self.images.add_updater(self._refresh_images)
+
+        self.center().set_y(-2)
+        self.year_tracker = ValueTracker(initial_year)
+        self.add_updater(
+            lambda tl: tl.shift(tl.number_line.n2p(tl.year_tracker.get_value())[0] * LEFT)
+        )
+
+    def _refresh_images(self, images_group):
+        for entry in self._image_entries:
+            img = entry["current"]
+            focal_value = np.exp(-0.1 * img.get_x() ** 2)
+            new_img = desaturate_from_source(entry["source_path"], 1 - focal_value**2, img)
+            new_img.set_width(1.6 + focal_value**0.7 * 2.35, about_edge=DOWN)
+            new_img.set_opacity(focal_value**0.5)
+            images_group.remove(img)
+            images_group.add(new_img)
+            entry["current"] = new_img
+
+    def add_image(self, file_path, year):
+        image = ImageMobject(file_path).align_to(DOWN, DOWN).set_x(self.number_line.n2p(year)[0])
+        self.images.add(image)
+        self._image_entries.append({"current": image, "source_path": image.image_path})
+        self._refresh_images(self.images)  # avoid a 1-frame flash of the raw original
 
     def center_on_year(self, year):
-        return self.shift(self.n2p(year)[0] * LEFT)
+        return self.shift(self.number_line.n2p(year)[0] * LEFT)
+
 
 
 class AIEvolution(InteractiveScene):
     def construct(self):
         # Add the timeline
-        timeline = Timeline(2017, 2030).shift(DOWN*2).center_on_year(2026)
+        timeline = Timeline(2017, 2030, 2023)
         self.add(timeline)
 
-        # Center it on the year 2023
-        self.play(timeline.animate.center_on_year(2023), run_time = 2)
+        # Add the images to the timeline
+        images_dir = "AI Evolution Timeline images"
+        image_names_and_years = {
+            "dwarkesh_thumbnail.png": 2023,
+            "deepmind_2024.jpg": 2024,
+            "deepmind_and_openai_gold_medal.webp": 2025
+        }
+        for file_name in image_names_and_years:
+            timeline.add_image(
+                os.path.join(images_dir, file_name),
+                image_names_and_years[file_name]
+            )
+
+        # Move to 2024
+        self.play(timeline.year_tracker.animate.set_value(2024), run_time = 2)
         self.wait(1)
 
-        # Center it on the year 2024
-        self.play(timeline.animate.center_on_year(2024), run_time = 2)
+        # Move to 2025
+        self.play(timeline.year_tracker.animate.set_value(2025), run_time = 2)
         self.wait(1)
 
-        # Center it on the year 2025
-        self.play(timeline.animate.center_on_year(2025), run_time = 2)
-        self.wait(1)
-
-        # Center it on the year 2026
-        self.play(timeline.animate.center_on_year(2026), run_time = 2)
+        # Move to 2026
+        self.play(timeline.year_tracker.animate.set_value(2026), run_time = 2)
         self.wait(1)
 
         # Go back to 2025
-        self.play(timeline.animate.center_on_year(2025), run_time = 1.5)
+        self.play(timeline.year_tracker.animate.set_value(2025), run_time = 2)
