@@ -2366,6 +2366,155 @@ class IMODetails(InteractiveScene):
         self.play(GrowArrow(arrow))
 
 
+class IMODetailsV2(InteractiveScene):
+    def construct(self):
+        # Write "International Math Olympiad"
+        imo_logo = ImageMobject("IMO_logo").set_opacity(0.9)
+        imo_text = TexText("International Math Olympiad", font_size = 160).set_opacity(0.9).set_stroke(width = 7, color = BLACK, behind = True).next_to(imo_logo, DOWN)
+        Group(imo_logo, imo_text).scale(0.3).to_edge(UP, buff = 0.3)
+        imo_text_shortened = TexText("2025 IMO", font_size = 30).set_stroke(width = 7, color = BLACK, behind = True).move_to(imo_text)
+        self.play(FadeIn(imo_logo, shift = OUT*2), Write(imo_text, stroke_color = WHITE))
+
+        # Fade in boxes for the problems underneath
+        problems = VGroup()
+        for i in range(6):
+            rect = Rectangle(width = 6, height = 1.5, fill_opacity = 1, fill_color = TEAL_A, stroke_width = 0).round_corners(0.2)
+            label = TexText(R"\text{Problem }" + str(i + 1)).set_color(BLACK)
+            label.set_z_index(1)
+            problem = VGroup(rect, label)
+            problems.add(problem)
+        problems.arrange_in_grid(n_cols = 2, h_buff = 2, v_buff = 0.5, fill_rows_first = False).set_width(10).to_edge(DOWN, buff = 0.7)
+        day1_label = TexText("Day 1").next_to(problems[:3], UP, buff = 0.4)
+        day2_label = TexText("Day 2").next_to(problems[3:], UP, buff = 0.4)
+        self.play(
+            AnimationGroup(
+                AnimationGroup(
+                    TransformMatchingShapes(imo_text, imo_text_shortened, run_time = 1),
+                    LaggedStartMap(FadeIn, problems, shift = UP*0.2, lag_ratio = 0.1)
+                ),
+                AnimationGroup(
+                    Write(day1_label),
+                    Write(day2_label)
+                )
+            , lag_ratio = 0.3)
+        )
+        self.wait(1)
+
+        # Highlight problem 6
+        self.play(problems[-1][0].animate.set_fill(color = RED).set_stroke(width = 4, color = YELLOW))
+        self.wait(2)
+
+        # Arrange the problems on the left
+        imo_text_shortened.generate_target()
+        imo_logo.generate_target()
+        Group(imo_logo.target, imo_text_shortened.target).scale(1.5).set_y(0).to_edge(RIGHT, buff = 1)
+        imo_logo.set_z_index(0)
+        imo_text_shortened.set_z_index(1)
+
+        for problem in problems:
+            problem.generate_target()
+        VGroup(*[problem.target for problem in problems]).scale(0.9).arrange(DOWN, buff = 0.2).to_edge(LEFT, buff = 0.6)
+
+        self.play(
+            MoveToTarget(imo_text_shortened, run_time = 2),
+            MoveToTarget(imo_logo, run_time = 2),
+            AnimationGroup(*[
+                MoveToTarget(problem, path_arc = PI*0.3 if problem.target.get_y() > 0 else -PI*0.3)
+                for problem in problems
+            ], lag_ratio = 0.06, run_time = 2),
+            FadeOut(VGroup(day1_label, day2_label))
+        )
+
+        # Show scores
+        total_participants = 630
+        scores_data = [368, 253, 102, 342, 215, 6]
+        score_bars = VGroup()
+        master_bar_width_tracker = ValueTracker(0)
+        for score, problem in zip(scores_data, problems):
+            skeleton = Rectangle(
+                width = 4,
+                height = 0.5,
+                fill_opacity = 0.1,
+                fill_color = WHITE,
+                stroke_width = 3,
+                stroke_color = WHITE,
+                stroke_opacity = 1
+            ).round_corners(0.08).set_z_index(1)
+
+            def get_bar(score = score, skeleton = skeleton):
+                fraction = master_bar_width_tracker.get_value()*score/total_participants
+                return Rectangle(
+                    fill_opacity = 1,
+                    fill_color = TEAL_E,
+                    stroke_width = 0
+                ).match_height(
+                    skeleton
+                ).stretch_to_fit_width(
+                    skeleton.get_width()*fraction
+                ).move_to(
+                    skeleton
+                ).align_to(
+                    skeleton, LEFT
+                ).round_corners(min(0.08, fraction)).set_z_index(0)
+            bar = always_redraw(get_bar)
+            score_bars.add(VGroup(bar, skeleton).next_to(problem, RIGHT, buff = 0.5))
+        self.add(score_bars)
+
+        scores = VGroup(*[
+            Integer(score, font_size = 30).set_color(TEAL).next_to(bar, RIGHT)
+            for score, bar in zip(scores_data, score_bars)
+        ])
+        def update_scores(s):
+            for score_value, score_display in zip(scores_data, scores):
+                score_display.set_value(
+                    int(score_value*master_bar_width_tracker.get_value())
+                ).set_opacity(
+                    master_bar_width_tracker.get_value()*3
+                )
+        scores.add_updater(update_scores)
+        self.add(scores)
+        arrow = Arrow(ORIGIN, LEFT*1.5).set_color(YELLOW).next_to(scores[-1], RIGHT)
+        bars_label = TexText("Number of perfect scores", font_size = 30).next_to(score_bars[0], UP)
+        self.play(
+            FadeIn(bars_label, run_time = 1.4),
+            AnimationGroup(
+                AnimationGroup(
+                    AnimationGroup(*[
+                        FadeIn(skeleton)
+                        for (_, skeleton) in score_bars
+                    ], run_time = 1),
+                    master_bar_width_tracker.animate(run_time = 2).set_value(1)
+                , lag_ratio = 0.02)
+            , lag_ratio = 0.2)
+        )
+        score_bars.clear_updaters()
+        scores.clear_updaters()
+        self.wait(1)
+        self.play(GrowArrow(arrow))
+        self.wait(2)
+
+        # Add text: "The Last IMO Problem that AI could not solve"
+        checkx_and_xs = VGroup(*[
+            (Checkmark().set_color(PURE_GREEN) if i < 5 else Exmark().set_color(PURE_RED)).next_to(problems[i], RIGHT)
+            for i in range(6)
+        ])
+        self.play(
+            FadeOut(Group(bars_label, score_bars, scores, arrow, imo_logo, imo_text_shortened), shift = RIGHT*2),
+            AnimationGroup(*[
+                FadeIn(check_or_x, shift = UP*0.1)
+                for check_or_x in checkx_and_xs
+            ], lag_ratio = 0.1)
+        , run_time = 2)
+        last_imo_problem_text = """
+            The last IMO problem that
+            AI could not solve
+        """
+        last_imo_problem = Text(last_imo_problem_text, font_size = 50).set_x(0.5*(FRAME_WIDTH*0.5 + checkx_and_xs.get_right()[0]))
+        for word in last_imo_problem_text.split():
+            self.add(last_imo_problem[word])
+            self.wait(0.06*len(word))
+        self.wait(2)
+
 
 
 
@@ -2408,16 +2557,18 @@ def desaturate_from_source(source_path: str, alpha: float, position_ref: ImageMo
 class Timeline(Group):
     def __init__(self, start_year, end_year, initial_year, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.start_year = start_year
+        self.end_year = end_year
         self.number_line = NumberLine(
-            x_range=(start_year, end_year, 1/12),
-            unit_size=3.8,
+            x_range=(self.start_year, self.end_year, 1/12),
+            unit_size=2.6,
             tick_size=0.1,
             longer_tick_multiple=2,
             big_tick_spacing=1
         )
         self.add(self.number_line)
         self.year_labels = self.number_line.add_numbers(
-            range(start_year, end_year),
+            range(self.start_year, self.end_year),
             group_with_commas=False,
         )
         def update_year_label(label):
@@ -2440,6 +2591,8 @@ class Timeline(Group):
             lambda tl: tl.shift(tl.number_line.n2p(tl.year_tracker.get_value())[0] * LEFT)
         )
 
+        self.markers = Group()
+
     def _refresh_images(self, images_group):
         for entry in self._image_entries:
             img = entry["current"]
@@ -2460,38 +2613,207 @@ class Timeline(Group):
     def center_on_year(self, year):
         return self.shift(self.number_line.n2p(year)[0] * LEFT)
 
+    def get_year_label(self, year):
+        return self.year_labels[year - self.start_year]
+
+    def get_marker(self, marker_text, year, image, font_size = 60, shift = 0, image_position = UP, image_shift = 0):
+        text = TexText(marker_text, font_size=font_size).next_to(self.number_line.n2p(year), UP).shift(UP*2.5 + shift)
+        ul = Underline(text)
+        heading = VGroup(text, ul)
+        image.next_to(heading, image_position).shift(image_shift)
+        
+        dot = Dot(radius=0.12).move_to(self.number_line.n2p(year)).set_z_index(1)
+        line = Line(dot.get_center(), ul.get_center(), buff=0, stroke_width=3)
+        
+        marker = Group(dot, line, heading, image)
+        marker.create = AnimationGroup(
+            AnimationGroup(
+                FadeIn(dot),
+                ShowCreation(line),
+                Write(text),
+                GrowFromPoint(ul, ul.get_left())
+            , lag_ratio = 0.2),
+            FadeIn(image, shift = image_position*0.2)
+        , lag_ratio = 0.5)
+        marker.year_tracker = ValueTracker(year)
+        marker.add_updater(lambda m: m.shift(self.number_line.n2p(m.year_tracker.get_value()) - dot.get_center()))
+        self.markers.add(marker)
+        return marker
 
 
-class AIEvolution(InteractiveScene):
+
+# class AIEvolution(InteractiveScene):
+#     def construct(self):
+#         # Add the timeline
+#         timeline = Timeline(2017, 2030, 2023)
+#         self.add(timeline)
+
+#         # Add the images to the timeline
+#         images_dir = "AI Evolution Timeline images"
+#         image_names_and_years = {
+#             "dwarkesh_thumbnail.png": 2023,
+#             "deepmind_2024.jpg": 2024,
+#             "deepmind_and_openai_gold_medal.webp": 2025
+#         }
+#         for file_name in image_names_and_years:
+#             timeline.add_image(
+#                 os.path.join(images_dir, file_name),
+#                 image_names_and_years[file_name]
+#             )
+
+#         # Move to 2024
+#         self.play(timeline.year_tracker.animate.set_value(2024), run_time = 2)
+#         self.wait(1)
+
+#         # Move to 2025
+#         self.play(timeline.year_tracker.animate.set_value(2025), run_time = 2)
+#         self.wait(1)
+
+#         # Move to 2026
+#         self.play(timeline.year_tracker.animate.set_value(2026), run_time = 2)
+#         self.wait(1)
+
+#         # Go back to 2025
+#         self.play(timeline.year_tracker.animate.set_value(2025), run_time = 2)
+
+
+class AIEvolutionV2(InteractiveScene):
     def construct(self):
         # Add the timeline
-        timeline = Timeline(2017, 2030, 2023)
+        timeline = Timeline(2010, 2040, 2026).set_y(-3)
         self.add(timeline)
 
-        # Add the images to the timeline
-        images_dir = "AI Evolution Timeline images"
-        image_names_and_years = {
-            "dwarkesh_thumbnail.png": 2023,
-            "deepmind_2024.jpg": 2024,
-            "deepmind_and_openai_gold_medal.webp": 2025
-        }
-        for file_name in image_names_and_years:
-            timeline.add_image(
-                os.path.join(images_dir, file_name),
-                image_names_and_years[file_name]
-            )
+        # Move to 2021
+        self.camera.frame.save_state()
+        self.play(
+            self.camera.frame.animate.scale(2, about_point = [0, timeline.get_y(), 0]),
+            timeline.year_tracker.animate.set_value(2021)
+        , run_time = 2.5)
+        self.wait(1)
+
+        # Add impressive results in games and natural language
+        alphago_marker = timeline.get_marker(
+            "AlphaGo beats Lee Sedol",
+            2016 + 3/12 + 15/365,
+            ImageMobject("AI Evolution Timeline images/alphago.png").set_height(2),
+            shift = UP*2.3 + RIGHT*3,
+            image_position = RIGHT
+        )
+        dota_marker = timeline.get_marker(
+            "OpenAI 5 beats Dota 2 champs",
+            2019 + 4/12 + 15/365,
+            ImageMobject("AI Evolution Timeline images/dota.png").set_height(2),
+            shift = UP*0.5 + RIGHT*2,
+            image_position = RIGHT,
+            image_shift = UP*0.3
+        )
+        gpt_marker = timeline.get_marker(
+            "GPT-3 released",
+            2020 + 5/12 + 29/365,
+            ImageMobject("AI Evolution Timeline images/gpt.png").set_height(2),
+            shift = DOWN*1.3 + RIGHT*2.6,
+            image_position = RIGHT,
+            image_shift = DOWN*0.2
+        )
+        self.play(
+            AnimationGroup(
+                alphago_marker.create,
+                dota_marker.create
+            , lag_ratio = 0.5)
+        )
+        self.play(gpt_marker.create)
+        self.wait(2)
+
+        # Add imo marker
+        imo_marker = timeline.get_marker(
+            "IMO Gold?",
+            2023.9,
+            ImageMobject("IMO_logo").set_height(2),
+            shift = UP + RIGHT*0.3
+        )
+        self.play(FadeIn(imo_marker))
+        self.play(imo_marker.year_tracker.animate.set_value(2025.6), run_time = 2)
+        self.play(imo_marker.year_tracker.animate.set_value(2023.6), run_time = 2)
+        self.play(
+            AnimationGroup(
+                imo_marker.year_tracker.animate(run_time = 7).set_value(2034),
+                self.camera.frame.animate(run_time = 5).shift(RIGHT*18)
+            , lag_ratio = 0.2)
+        )
+
+        # Move back to 2023
+        self.play(
+            AnimationGroup(
+                FadeOut(Group(alphago_marker, dota_marker, gpt_marker, imo_marker), run_time = 1),
+                AnimationGroup(
+                    self.camera.frame.animate.restore(),
+                    timeline.year_tracker.animate.set_value(2023)
+                , run_time = 3)
+            , lag_ratio = 0.4)
+        )
+        self.wait(1)
 
         # Move to 2024
         self.play(timeline.year_tracker.animate.set_value(2024), run_time = 2)
+        deepmind_marker = timeline.get_marker(
+            "Deepmind solves 4/6 IMO problems",
+            2024 + 7/12 + 25/365,
+            ImageMobject("AI Evolution Timeline images/deepmind_2024.jpg").set_height(2),
+            shift = DOWN*0.5 + RIGHT*2,
+            font_size = 36
+        )
+        self.play(deepmind_marker.create)
         self.wait(1)
 
         # Move to 2025
-        self.play(timeline.year_tracker.animate.set_value(2025), run_time = 2)
-        self.wait(1)
+        deepmind_marker_opacity_tracker = ValueTracker(1)
+        deepmind_marker.add_updater(lambda m: m.set_opacity(deepmind_marker_opacity_tracker.get_value()))
+        timeline.add_updater(lambda m: deepmind_marker.update())
+        self.play(
+            timeline.year_tracker.animate.set_value(2025),
+            deepmind_marker_opacity_tracker.animate.set_value(0)
+        , run_time = 2)
+        self.remove(deepmind_marker)
+        deepmind_and_openai_marker = timeline.get_marker(
+            R"Deepmind and OpenAI solve \\ all questions except P6",
+            2025 + 7/12 + 21/365,
+            ImageMobject("AI Evolution Timeline images/deepmind_and_openai_gold_medal.webp").set_height(2),
+            shift = DOWN*0.5 + RIGHT*1.5,
+            font_size = 36
+        )
+        self.play(deepmind_and_openai_marker.create)
 
         # Move to 2026
-        self.play(timeline.year_tracker.animate.set_value(2026), run_time = 2)
-        self.wait(1)
+        deepmind_and_openai_marker_opacity_tracker = ValueTracker(1)
+        deepmind_and_openai_marker.add_updater(lambda m: m.set_opacity(deepmind_and_openai_marker_opacity_tracker.get_value()))
+        timeline.add_updater(lambda m: deepmind_and_openai_marker.update())
+        self.play(
+            timeline.year_tracker.animate.set_value(2026),
+            deepmind_and_openai_marker_opacity_tracker.animate.set_value(0)
+        , run_time = 2)
+        self.remove(deepmind_and_openai_marker)
 
-        # Go back to 2025
-        self.play(timeline.year_tracker.animate.set_value(2025), run_time = 2)
+
+class LuongQuote(InteractiveScene):
+    def construct(self):
+        # Add the quote
+        quote = Text(
+            """
+            We didn’t really have a way to teach
+            the models to be patient. It didn't
+            take the time to really understand the
+            problem, to get a feel for the problem,
+            to try not to solve the problem.
+            """
+        ).set_color(YELLOW)
+        quote_bg = quote.copy().set_color("#111111")
+        self.add(quote_bg)
+        self.play(FadeIn(quote["""We didn’t really have a way to teach
+            the models to be patient."""]), lag_ratio = 0.1, run_time = 3)
+        self.wait(0.2)
+        self.play(FadeIn(quote["""It didn't
+            take the time to really understand the
+            problem,"""]), lag_ratio = 0.1, run_time = 2.5)
+        self.play(FadeIn(quote["""to get a feel for the problem,"""]), lag_ratio = 0.1, run_time = 1.5)
+        self.wait(0.1)
+        self.play(FadeIn(quote["""to try not to solve the problem."""]), lag_ratio = 0.1, run_time = 2)
