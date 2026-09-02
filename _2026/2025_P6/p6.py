@@ -2809,34 +2809,64 @@ class LuongQuote(InteractiveScene):
         quote = Text(
             """
             We didn’t really have a way to teach
-            the models to be patient. It didn't
-            take the time to really understand the
-            problem, to get a feel for the problem,
-            to try not to solve the problem.
+            the model to be patient. It didn't take
+            the time to understand the problem,
+            to get a feel for the problem,
+            to not try to solve the problem.
             """,
             alignment = "left"
         ).set_color(YELLOW)
         quote_bg = quote.copy().set_color("#111111")
         self.add(quote_bg)
         self.play(FadeIn(quote["""We didn’t really have a way to teach
-            the models to be patient."""], lag_ratio = 0.1, run_time = 3))
+            the model to be patient."""], lag_ratio = 0.1, run_time = 3))
         self.wait(0.2)
-        self.play(FadeIn(quote["""It didn't
-            take the time to really understand the
-            problem,"""], lag_ratio = 0.1, run_time = 2.5),
+        self.play(FadeIn(quote["""It didn't take
+            the time to understand the problem,"""], lag_ratio = 0.1, run_time = 2.5),
             quote["""We didn’t really have a way to teach
-            the models to be patient."""].animate.set_color(WHITE)
+            the model to be patient."""].animate.set_color(WHITE)
         )
         self.play(
             FadeIn(quote["""to get a feel for the problem,"""], lag_ratio = 0.1, run_time = 1.5),
-            quote["""It didn't
-            take the time to really understand the
-            problem,"""].animate.set_color(WHITE)
+            quote["""It didn't take
+            the time to understand the problem,"""].animate.set_color(WHITE)
         )
         self.wait(0.1)
         self.play(
-            FadeIn(quote["""to try not to solve the problem."""], lag_ratio = 0.1, run_time = 1.5),
+            FadeIn(quote["""to not try to solve the problem."""], lag_ratio = 0.1, run_time = 1.5),
             quote["""to get a feel for the problem,"""].animate.set_color(WHITE)
         )
-        self.wait(0.5)
-        self.play(quote["""to try not to solve the problem."""].animate.set_color(WHITE))
+        self.wait(0.1)
+        self.play(quote["""to not try to solve the problem."""].animate.set_color(WHITE))
+
+class PiCreaturesWatchingPreview(TeacherStudentsScene):
+    def construct(self):
+        # Students watch the preview
+        self.play(self.get_teacher().change("raise_right_hand", look_at = UP*2))
+        self.play(
+            self.get_students()[0].change("happy", look_at = UP*2),
+            self.get_students()[1].change("pondering", look_at = UP*2),
+            self.get_students()[2].change("well", look_at = UP*2)
+        )
+        self.wait(20)
+
+class PiCreaturesWatchingPreview2(TeacherStudentsScene):
+    def construct(self):
+        # Students watch the preview
+        self.play(self.get_teacher().change("raise_right_hand", look_at = UP*2 + LEFT*4))
+        self.play(
+            self.get_students()[0].change("happy", look_at = UP*2 + LEFT*4),
+            self.get_students()[1].change("pondering", look_at = UP*2 + LEFT*4),
+            self.get_students()[2].change("well", look_at = UP*2 + LEFT*4)
+        )
+        self.wait(3)
+
+        # Teacher reminds students to be patient
+        self.teacher_says(Text("You'll need to\nbe patient", font_size = 40))
+        self.play(
+            self.get_students()[0].change("pondering", look_at = DOWN*2),
+            self.get_students()[1].change("thinking", look_at = DOWN*2),
+            self.get_students()[2].change("pondering", look_at = DOWN*2)
+        )
+
+        self.wait(7)
