@@ -2808,22 +2808,22 @@ class LuongQuote(InteractiveScene):
         # Add the quote
         quote = Text(
             """
-            We didn’t really have a way to teach
+            ‘‘We didn’t really have a way to teach
             the model to be patient. It didn't take
             the time to understand the problem,
             to get a feel for the problem,
-            to not try to solve the problem.
+            to not try to solve the problem.”
             """,
             alignment = "left"
         ).set_color(YELLOW)
         quote_bg = quote.copy().set_color("#111111")
         self.add(quote_bg)
-        self.play(FadeIn(quote["""We didn’t really have a way to teach
+        self.play(FadeIn(quote["""‘‘We didn’t really have a way to teach
             the model to be patient."""], lag_ratio = 0.1, run_time = 3))
         self.wait(0.2)
         self.play(FadeIn(quote["""It didn't take
             the time to understand the problem,"""], lag_ratio = 0.1, run_time = 2.5),
-            quote["""We didn’t really have a way to teach
+            quote["""‘‘We didn’t really have a way to teach
             the model to be patient."""].animate.set_color(WHITE)
         )
         self.play(
@@ -2833,11 +2833,11 @@ class LuongQuote(InteractiveScene):
         )
         self.wait(0.1)
         self.play(
-            FadeIn(quote["""to not try to solve the problem."""], lag_ratio = 0.1, run_time = 1.5),
+            FadeIn(quote["""to not try to solve the problem.”"""], lag_ratio = 0.1, run_time = 1.5),
             quote["""to get a feel for the problem,"""].animate.set_color(WHITE)
         )
         self.wait(0.1)
-        self.play(quote["""to not try to solve the problem."""].animate.set_color(WHITE))
+        self.play(quote["""to not try to solve the problem.”"""].animate.set_color(WHITE))
 
 class PiCreaturesWatchingPreview(TeacherStudentsScene):
     def construct(self):
