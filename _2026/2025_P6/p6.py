@@ -2638,6 +2638,14 @@ class Timeline(Group):
         marker.year_tracker = ValueTracker(year)
         marker.add_updater(lambda m: m.shift(self.number_line.n2p(m.year_tracker.get_value()) - dot.get_center()))
         self.markers.add(marker)
+
+        marker.text = text
+        marker.ul = ul
+        marker.heading = heading
+        marker.image = image
+        marker.dot = dot
+        marker.line = line
+
         return marker
 
 
@@ -2775,12 +2783,13 @@ class AIEvolutionV2(InteractiveScene):
         , run_time = 2)
         self.remove(deepmind_marker)
         deepmind_and_openai_marker = timeline.get_marker(
-            R"Deepmind and OpenAI solve \\ all questions except P6",
+            R"Deepmind, OpenAI, Harmonic, and Bytedance \\ solve all problems except P6",
             2025 + 7/12 + 21/365,
-            ImageMobject("AI Evolution Timeline images/deepmind_and_openai_gold_medal.webp").set_height(2),
-            shift = DOWN*0.5 + RIGHT*1.5,
-            font_size = 36
+            ImageMobject("AI Evolution Timeline images/multiple_models_win_gold.png").set_height(3),
+            shift = DOWN*0.5 + RIGHT*1.2,
+            font_size = 33
         )
+        deepmind_and_openai_marker.text["except P6"].set_color(RED)
         self.play(deepmind_and_openai_marker.create)
 
         # Move to 2026
@@ -2804,16 +2813,30 @@ class LuongQuote(InteractiveScene):
             take the time to really understand the
             problem, to get a feel for the problem,
             to try not to solve the problem.
-            """
+            """,
+            alignment = "left"
         ).set_color(YELLOW)
         quote_bg = quote.copy().set_color("#111111")
         self.add(quote_bg)
         self.play(FadeIn(quote["""We didn’t really have a way to teach
-            the models to be patient."""]), lag_ratio = 0.1, run_time = 3)
+            the models to be patient."""], lag_ratio = 0.1, run_time = 3))
         self.wait(0.2)
         self.play(FadeIn(quote["""It didn't
             take the time to really understand the
-            problem,"""]), lag_ratio = 0.1, run_time = 2.5)
-        self.play(FadeIn(quote["""to get a feel for the problem,"""]), lag_ratio = 0.1, run_time = 1.5)
+            problem,"""], lag_ratio = 0.1, run_time = 2.5),
+            quote["""We didn’t really have a way to teach
+            the models to be patient."""].animate.set_color(WHITE)
+        )
+        self.play(
+            FadeIn(quote["""to get a feel for the problem,"""], lag_ratio = 0.1, run_time = 1.5),
+            quote["""It didn't
+            take the time to really understand the
+            problem,"""].animate.set_color(WHITE)
+        )
         self.wait(0.1)
-        self.play(FadeIn(quote["""to try not to solve the problem."""]), lag_ratio = 0.1, run_time = 2)
+        self.play(
+            FadeIn(quote["""to try not to solve the problem."""], lag_ratio = 0.1, run_time = 1.5),
+            quote["""to get a feel for the problem,"""].animate.set_color(WHITE)
+        )
+        self.wait(0.5)
+        self.play(quote["""to try not to solve the problem."""].animate.set_color(WHITE))
