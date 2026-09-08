@@ -31,17 +31,18 @@ class TurboGrid(Group):
 		self.turbo = Sphere(radius = 0.3).move_to(self.tiles[0]).align_to(self.tiles[0].get_zenith(), IN).shift(OUT*0.01)
 
 	def create(self):
-		return Succession(
-			AnimationGroup(*[
-				FadeIn(tile, shift = OUT*0.1)
-				for tile in self.tiles
-			], lag_ratio = 0.1),
+		tiles_sorted_from_center = sorted(self.tiles, key = lambda t: np.linalg.norm(t.get_center() - self.tiles.get_center()))
+		return AnimationGroup(
+			*[
+				FadeIn(tile, shift = IN*0.3)
+				for tile in tiles_sorted_from_center
+			],
 			FadeIn(self.turbo, shift = IN*0.3)
-		)
+		, lag_ratio = 0.1)
 
-
-class TurboTest(InteractiveScene):
+class TurboTest(InteractiveScene, ThreeDScene):
     def construct(self):
         # Add a grid
+        self.camera.frame.reorient(25, 54, 0)
         grid = TurboGrid(5)
         self.play(grid.create())
