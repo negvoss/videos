@@ -4586,6 +4586,7 @@ class QuoteScene(InteractiveScene):
 class LuongQuote(QuoteScene):
     def construct(self):
         # Show the quote
+        self.bg_color = WHITE
         raw_text = """
             ‘‘We didn’t really have a way to teach
             the model to be patient.| It didn’t take
@@ -4593,7 +4594,7 @@ class LuongQuote(QuoteScene):
             to get a feel for the problem,|
             to not try to solve the problem.”
             """
-        self.play_quote(raw_text)
+        self.play_quote(raw_text, run_times=[10])
 
 
 class PatreonQuote(QuoteScene):
@@ -4616,6 +4617,46 @@ class PatreonQuote(QuoteScene):
             of the average PhD thesis.”
             """
         self.play_quote(raw_text)
+
+
+class TerrenceTaoQuote(QuoteScene):
+    def construct(self):
+        # Show the quote
+        self.bg_color = WHITE
+        raw_text = """
+            “The failure to differentiate the foundation
+            from that which is built upon it is a failure
+            to understand that human understanding is the
+            basis for all utility deriving engineering,
+            including AI.”
+            """
+        self.play_quote(raw_text, run_times=[10])
+
+
+class JamesMaynardQuote(QuoteScene):
+    def construct(self, run_times=[10]):
+        # Show the quote
+        self.bg_color = WHITE
+        raw_text = """
+            “The primary goal of mathematics has always
+            been about human understanding of ideas.”
+            """
+        self.play_quote(raw_text, run_times=[10])
+
+
+class TimothyGowersQuote(QuoteScene):
+    def construct(self):
+        # Show the quote
+        self.bg_color = WHITE
+        raw_text = """
+            “If a society does not have a significant number
+            of people who understand mathematics at some
+            level, we risk becoming passive consumers under
+            the control of these systems. On the other hand,
+            people who do make the effort to understand
+            mathematics will have a large advantage.”
+            """
+        self.play_quote(raw_text, run_times=[10])
 
 
 class PiCreaturesWatchingPreview(TeacherStudentsScene):
