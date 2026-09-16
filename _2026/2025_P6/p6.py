@@ -4036,32 +4036,6 @@ class IMODetailsV2(InteractiveScene):
         self.wait(2)
 
 
-class ThumbnailIdea1(InteractiveScene):
-    def construct(self):
-        # Add problems
-        problems = VGroup()
-        for i in range(6):
-            rect = Rectangle(width=6, height=1.5, fill_opacity=1, fill_color=GREEN, stroke_width=10, stroke_color=BLACK).round_corners(0.3)
-            label = TexText(R"\text{P}" + str(i + 1), font_size=120).set_color(BLACK)
-            label.set_z_index(1)
-            problem = VGroup(rect, label)
-            problems.add(problem)
-        problems[-1][0].set_fill(color=RED)
-        problems.arrange(DOWN, buff=0.2).set_height(FRAME_HEIGHT * 0.9).to_edge(LEFT, buff=1).fix_in_frame().set_z_index(100)
-        self.add(problems)
-
-        # Add a random grid
-        random.seed(2)
-        self.camera.frame.reorient(-28, 55, 0, (-16.09, -0.07, -17.96), 49.76)
-        grid = RandomGrid(100)
-        grid.get_reasonable_tiling()
-        self.add(grid)
-        for hole in grid.holes:
-            hole.border.set_opacity(0)
-            hole.cross.set_opacity(0)
-            hole.background.set_color(RED_D).set_stroke(width=2)
-
-
 _desaturate_cache_dir = os.path.join(tempfile.gettempdir(), "manim_desaturate_cache")
 os.makedirs(_desaturate_cache_dir, exist_ok=True)
 _source_array_cache = {}  # source_path -> float64 rgb(a) array, decoded once per source
@@ -4828,3 +4802,37 @@ class Headlines(InteractiveScene):
             )
 
         self.play(*animations)
+
+
+class ThumbnailIdea1(InteractiveScene):
+    def construct(self):
+        # Add problems
+        problems = VGroup()
+        for i in range(6):
+            rect = Rectangle(width=6, height=1.5, fill_opacity=1, fill_color=GREEN, stroke_width=10, stroke_color=BLACK).round_corners(0.3)
+            label = TexText(R"\text{P}" + str(i + 1), font_size=120).set_color(BLACK)
+            label.set_z_index(1)
+            problem = VGroup(rect, label)
+            problems.add(problem)
+        problems[-1][0].set_fill(color=RED)
+        problems.arrange(DOWN, buff=0.2).set_height(FRAME_HEIGHT * 0.9).to_edge(LEFT, buff=1).fix_in_frame().set_z_index(100)
+        self.add(problems)
+
+        # Add a random grid
+        random.seed(2)
+        self.camera.frame.reorient(-28, 55, 0, (-16.09, -0.07, -17.96), 49.76)
+        grid = RandomGrid(100)
+        grid.get_reasonable_tiling()
+        self.add(grid)
+        for hole in grid.holes:
+            hole.border.set_opacity(0)
+            hole.cross.set_opacity(0)
+            hole.background.set_color(RED_D).set_stroke(width=2)
+
+
+class ThumbnailIdea2(InteractiveScene):
+    def construct(self):
+        # Add timeline
+        timeline = Timeline(2010, 2040, 2025).set_y(-3)
+        self.camera.frame.scale(0.8, about_point=timeline.get_bottom())
+        self.add(timeline)
