@@ -4657,7 +4657,7 @@ class PiCreaturesWatchingPreview2(TeacherStudentsScene):
         self.wait(3)
 
         # Teacher reminds students to be patient
-        self.teacher_says(Text("You'll need to\nbe patient", font_size=40))
+        self.teacher_says(Text("You’ll need to\nbe patient", font_size=40))
         self.play(
             self.get_students()[0].change("pondering", look_at=DOWN * 2),
             self.get_students()[1].change("thinking", look_at=DOWN * 2),
