@@ -109,18 +109,21 @@ class Turbo(Sprite):
             self.opacity_tracker.animate(run_time=0.4).set_value(1)
         )
 
-    def move(self, direction, run_time=0.5):
+    def get_neighbor(self, direction):
         i, j = self.current_position
         if (direction == UP).all():
-            new_position = (i, j - 1)
-        elif (direction == RIGHT).all():
-            new_position = (i + 1, j)
-        elif (direction == DOWN).all():
-            new_position = (i, j + 1)
-        elif (direction == LEFT).all():
-            new_position = (i - 1, j)
-        else:
-            raise ValueError("Direction of movement must be UP, RIGHT, DOWN, or LEFT")
+            return (i, j - 1)
+        if (direction == RIGHT).all():
+            return (i + 1, j)
+        if (direction == DOWN).all():
+            return (i, j + 1)
+        if (direction == LEFT).all():
+            return (i - 1, j)
+        raise ValueError("Direction of movement must be UP, RIGHT, DOWN, or LEFT")
+
+    def move(self, direction, run_time=0.5):
+        i, j = self.current_position
+        new_position = self.get_neighbor(direction)
 
         reveal_anim = self.grid.reveal_tile(*new_position, axis=[new_position[1] - j, new_position[0] - i, 0])
         if self.grid.is_monster(*new_position):
@@ -244,6 +247,49 @@ class TurboGrid(Group):
                 ], lag_ratio=0.1)), lag_ratio=0.2)
 
 
+class TurboController:
+    def __init__(self, scene):
+        self.scene = scene
+        self.n = scene.grid.n
+
+    @property
+    def position(self):
+        return tuple(self.scene.turbo.current_position)
+
+    @property
+    def col(self):
+        return self.position[0]
+
+    @property
+    def row(self):
+        return self.position[1]
+
+    def move(self, direction):
+        target = self.scene.turbo.get_neighbor(direction)
+        if not self.scene.move_turbo(direction):
+            self.last_monster_pos = target
+            return False
+        return True
+
+    def move_to_col(self, col):
+        direction = RIGHT if col > self.col else LEFT
+        for _ in range(abs(col - self.col)):
+            if not self.move(direction):
+                return False
+        return True
+
+    def move_to_row(self, row):
+        direction = DOWN if row > self.row else UP
+        for _ in range(abs(row - self.row)):
+            if not self.move(direction):
+                return False
+        return True
+
+    def try_col(self, col):
+        self.move_to_col(col)
+        return self.move_to_row(self.n - 1)
+
+
 def get_random_monster_positions(n):
     monster_positions = []
     remaining_columns = set(range(n - 1))
@@ -265,13 +311,16 @@ class TurboScene(InteractiveScene):
 
     def move_turbo(self, direction, *args, **kwargs):
         self.play(self.turbo.move(direction), *args, **kwargs)
-        if self.grid.is_monster(*self.turbo.current_position):
-            monster = self.grid.get_monster(*self.turbo.current_position)
-            self.play(
-                AnimationGroup(
-                    self.turbo.move_to_start(),
-                    monster.animate_set_time(monster.BURROW_KEYFRAME_END), lag_ratio=0.6)
-            )
+        position = tuple(self.turbo.current_position)
+        if not self.grid.is_monster(*position):
+            return True
+        monster = self.grid.get_monster(*position)
+        self.play(
+            AnimationGroup(
+                self.turbo.move_to_start(),
+                monster.animate_set_time(monster.BURROW_KEYFRAME_END), lag_ratio=0.6)
+        )
+        return False
 
 
 class TurboTest(TurboScene, ThreeDScene):
@@ -315,7 +364,7 @@ class TurboTest(TurboScene, ThreeDScene):
 class BruteForce(TurboScene, ThreeDScene):
     def __init__(self, *args, **kwargs):
         n = 15
-        random.seed(3)
+        random.seed(2)
         super().__init__(n, get_random_monster_positions(n), *args, **kwargs)
 
     def construct(self):
@@ -323,10 +372,9 @@ class BruteForce(TurboScene, ThreeDScene):
         self.camera.frame.reorient(26, 58, 0, (-0.19, -0.72, -0.82), 8.21)
 
         # Add the grid
-        grid, turbo = self.grid, self.turbo
         self.play(
             self.camera.frame.animate.reorient(-10, 28, 0, (-0.05, -1.26, -1.02), 15.91),
-            grid.create(), run_time=4)
+            self.grid.create(), run_time=4)
 
         # Show the initial positions of the monsters
         shuffled_monsters = list(self.grid.monsters)
@@ -340,11 +388,103 @@ class BruteForce(TurboScene, ThreeDScene):
         self.wait(1)
 
         # Show how each column has at most one monster
+        rect = Rectangle(
+            width=self.grid.get_col(0).get_width(),
+            height=self.grid.get_col(0).get_height(),
+            fill_opacity=0.5,
+            fill_color=YELLOW,
+            stroke_width=0
+        ).move_to(
+            self.grid.get_col(0)
+        ).shift(
+            OUT * 0.02
+        )
+        self.play(FadeIn(rect), run_time=0.6)
+        free_columns = set(range(self.grid.n - 1))
+        for (i, j) in self.grid.monster_positions:
+            free_columns.remove(i)
+        free_column = list(free_columns)[0]
+        for col in range(1, free_column + 1):
+            self.play(rect.animate.match_x(self.grid.get_col(col)), run_time=0.6)
 
-        # Move turbo
-        moves = [RIGHT] * 5 + [DOWN] * 14
-        for direction in moves:
-            self.move_turbo(direction)
-        # moves = [DOWN, DOWN, DOWN, RIGHT, RIGHT, DOWN, RIGHT, DOWN, DOWN, DOWN, DOWN, DOWN]
-        # for direction in moves:
-        #     self.move_turbo(direction, run_time = 0.5)
+        self.play(
+            AnimationGroup(*[
+                monster.animate_set_time(monster.REVEAL_KEYFRAME_START)
+                for monster in self.grid.monsters
+            ])
+        )
+
+        # Execute the strategy
+        turbo = TurboController(self)
+        n = self.grid.n
+
+        def brute_force():
+            for col in range(n - 1):
+                if turbo.try_col(col):
+                    return
+        brute_force()
+
+
+class GetUnderneath(TurboScene, ThreeDScene):
+    def __init__(self, *args, **kwargs):
+        random.seed(4)
+        n = 15
+        super().__init__(n, get_random_monster_positions(n), *args, **kwargs)
+
+    def construct(self):
+        # Set the camera
+        self.camera.frame.reorient(0, 0, 0, (0, 0, 0), 16)
+
+        # Add the grid
+        self.add(self.grid, self.turbo)
+
+        shuffled_monsters = list(self.grid.monsters)
+        random.shuffle(shuffled_monsters)
+
+        # Show the initial positions of the monsters
+        shuffled_monsters = list(self.grid.monsters)
+        random.shuffle(shuffled_monsters)
+        self.play(
+            AnimationGroup(*[
+                monster.animate_set_time(monster.REVEAL_KEYFRAME_END)
+                for monster in shuffled_monsters
+            ], lag_ratio=0.1),
+            self.camera.frame.animate.reorient(0, 0, 0, (0, 0, 0), 16), run_time=2)
+        self.wait(1)
+
+        # Hide the monsters again
+        self.play(
+            AnimationGroup(*[
+                monster.animate_set_time(monster.REVEAL_KEYFRAME_START)
+                for monster in self.grid.monsters
+            ])
+        )
+
+        # Execute the strategy
+        turbo = TurboController(self)
+        n = self.grid.n
+
+        def get_underneath():
+            # Try a column
+            col = 0
+            if turbo.try_col(col):
+                return
+
+            while True:
+                # Move just before the last monster
+                turbo.move_to_col(turbo.last_monster_pos[0])
+                turbo.move_to_row(turbo.last_monster_pos[1] - 1)
+
+                # Attempt to pass the monster on the right
+                moves = [RIGHT, DOWN, DOWN, LEFT]
+                found_monster = False
+                for move in moves:
+                    if not turbo.move(move):
+                        found_monster = True
+                        break
+                # If successful, move to the bottom row
+                if not found_monster:
+                    turbo.move_to_row(n - 1)
+                    return
+
+        get_underneath()
