@@ -175,7 +175,7 @@ class LargeMultipleScene(PhoneNumberScene):
 
         self.update_layout()
 
-    def count_up_to_k(self, move_camera = False, additional_anim = Animation(Mobject()), run_time = None):
+    def count_up_to_k(self, move_camera=False, additional_anim=Animation(Mobject()), run_time=None):
         # Keep the layout live from here on
         self.multiplication_group.add_updater(lambda m: self.update_layout())
         self.add(self.multiplication_group)
@@ -186,7 +186,7 @@ class LargeMultipleScene(PhoneNumberScene):
             drift_time = max(self.count_up_time - self.camera_lead, 1)
             self.set_camera_target_position(center=center, height=height, drift_time=drift_time)
         self.play(
-            self.log_multiple.animate(run_time = run_time if run_time is not None else self.count_up_time).set_value(self.log_k),
+            self.log_multiple.animate(run_time=run_time if run_time is not None else self.count_up_time).set_value(self.log_k),
             additional_anim,
             rate_func=smooth,
         )
@@ -302,9 +302,10 @@ class Example5(LargeMultipleScene):
 
         # Set the multiple to its target value
         self.count_up_to_k(
-            additional_anim = self.camera.frame.animate(run_time = 3).scale(2.5).shift(LEFT*5),
-            run_time = 4
+            additional_anim=self.camera.frame.animate(run_time=3).scale(2.5).shift(LEFT * 5),
+            run_time=4
         )
+
 
 class Example6(LargeMultipleScene):
     def __init__(self, **kwargs):
@@ -322,10 +323,9 @@ class Example6(LargeMultipleScene):
 
         # Set the multiple to its target value
         self.count_up_to_k(
-            additional_anim = self.camera.frame.animate(run_time = 3).scale(2.5).shift(LEFT*5),
-            run_time = 4
+            additional_anim=self.camera.frame.animate(run_time=3).scale(2.5).shift(LEFT * 5),
+            run_time=4
         )
-
 
 
 class Example7(LargeMultipleScene):
@@ -347,10 +347,9 @@ class Example7(LargeMultipleScene):
 
         # Set the multiple to its target value
         self.count_up_to_k(
-            additional_anim = self.camera.frame.animate(run_time = 3).scale(2.5).shift(LEFT*5),
-            run_time = 4
+            additional_anim=self.camera.frame.animate(run_time=3).scale(2.5).shift(LEFT * 5),
+            run_time=4
         )
-
 
 
 class Example8(LargeMultipleScene):
@@ -370,10 +369,9 @@ class Example8(LargeMultipleScene):
 
         # Set the multiple to its target value
         self.count_up_to_k(
-            additional_anim = self.camera.frame.animate(run_time = 3).scale(2.5).shift(LEFT*5),
-            run_time = 4
+            additional_anim=self.camera.frame.animate(run_time=3).scale(2.5).shift(LEFT * 5),
+            run_time=4
         )
-
 
 
 class BruteForce(LargeMultipleScene):
