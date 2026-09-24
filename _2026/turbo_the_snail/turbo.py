@@ -32,19 +32,22 @@ class TileFlip(Animation):
 
 
 class Tile(Group):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, parity=True, finish_line=False, has_monster=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.top = TexturedSurface(
             Square3D(side_length=1),
-            os.path.join(SPRITES_DIRECTORY, "Manim-TileSet-1.png")
+            os.path.join(SPRITES_DIRECTORY, "MTilv2-1.png" if parity else "MTilv2-3.png"),
+            texture_filter="nearest"
         )
         self.bot = TexturedSurface(
             Square3D(side_length=1),
-            os.path.join(SPRITES_DIRECTORY, "Manim-TileSet-5.png")
+            os.path.join(SPRITES_DIRECTORY, "MTilv2-4.png" if has_monster else "MTilv2-5.png" if finish_line else "MTilv2-2.png"),
+            texture_filter="nearest"
         )
         self.add(self.top, self.bot)
         self.arrange(IN, buff=0.001)
+        self.set_shading(0, 0, 0)
 
     def reveal(self, axis=RIGHT, run_time=0.5, **kwargs):
         if self.top.get_z() > self.bot.get_z():
@@ -54,16 +57,24 @@ class Tile(Group):
 
 
 class Turbo(Sprite):
-    IDLE_KEYFRAME_START = 0
-    IDLE_KEYFRAME_END = 51 / 60
-    MOVE_KEYFRAME_START = IDLE_KEYFRAME_END
-    MOVE_KEYFRAME_END = 70 / 60
+    FRAME_DURATION = 0.1
+    FRAMES_PER_ANIMATION = 8
+    ANIMATION_DURATION = FRAMES_PER_ANIMATION * FRAME_DURATION
+    LAST_FRAME_OFFSET = (FRAMES_PER_ANIMATION - 1) * FRAME_DURATION
+
+    RIGHT_START = 0 * ANIMATION_DURATION
+    DOWN_START = 1 * ANIMATION_DURATION
+    LEFT_START = 2 * ANIMATION_DURATION
+    UP_START = 3 * ANIMATION_DURATION
+    DEATH_START = 4 * ANIMATION_DURATION
+    DEATH_END = DEATH_START + LAST_FRAME_OFFSET
 
     def __init__(self, grid, *args, **kwargs):
         self.grid = grid
         self.current_position = [0, 0]
+        self.previous_position = (0, 0)
         super().__init__(
-            os.path.join(SPRITES_DIRECTORY, "turbo.gif"),
+            os.path.join(SPRITES_DIRECTORY, "MTurbv2-Turbo.gif"),
             height=grid.get_tile(0, 0).get_height() * 0.8,
             *args,
             **kwargs
@@ -76,7 +87,7 @@ class Turbo(Sprite):
             OUT * 0.02
         )
 
-        self.time_tracker = ValueTracker(self.IDLE_KEYFRAME_START)
+        self.time_tracker = ValueTracker(self.RIGHT_START)
         # Hacky fix below: if self.time_tracker.add_updater(lambda t: self.set_time(t.get_value())) is used,
         # it causes the tracker to get stuck oscillating between the two keyframe values, since the other .animates
         # create copies of the tracker.
@@ -99,14 +110,12 @@ class Turbo(Sprite):
 
         arc_axis = np.cross(move_vector, IN)
 
-        return AnimationGroup(
-            self.move_to_position(
-                0, 0,
-                path_arc=PI * 0.8,
-                path_arc_axis=arc_axis,
-                **kwargs
-            ),
-            self.opacity_tracker.animate(run_time=0.4).set_value(1)
+        self.time_tracker.set_value(self.RIGHT_START)
+        return self.move_to_position(
+            0, 0,
+            path_arc=PI * 0.8,
+            path_arc_axis=arc_axis,
+            **kwargs
         )
 
     def get_neighbor(self, direction):
@@ -121,31 +130,66 @@ class Turbo(Sprite):
             return (i - 1, j)
         raise ValueError("Direction of movement must be UP, RIGHT, DOWN, or LEFT")
 
+    def get_direction_start(self, direction):
+        if (direction == RIGHT).all():
+            return self.RIGHT_START
+        if (direction == DOWN).all():
+            return self.DOWN_START
+        if (direction == LEFT).all():
+            return self.LEFT_START
+        if (direction == UP).all():
+            return self.UP_START
+        raise ValueError("Direction of movement must be UP, RIGHT, DOWN, or LEFT")
+
     def move(self, direction, run_time=0.5):
         i, j = self.current_position
+        self.previous_position = (i, j)
         new_position = self.get_neighbor(direction)
 
-        reveal_anim = self.grid.reveal_tile(*new_position, axis=[new_position[1] - j, new_position[0] - i, 0])
+        walk_start = self.get_direction_start(direction)
+        walk_end = walk_start + self.LAST_FRAME_OFFSET
+        self.time_tracker.set_value(walk_start)
+
+        walk_in = AnimationGroup(
+            self.move_to_position(*new_position, run_time=run_time),
+            self.time_tracker.animate(run_time=run_time).set_value(walk_end)
+        )
+
         if self.grid.is_monster(*new_position):
-            reveal_anim = self.grid.reveal_monster(*new_position)
-        self.time_tracker.set_value(self.MOVE_KEYFRAME_START)
-        return AnimationGroup(
-            AnimationGroup(
-                self.move_to_position(*new_position),
-                self.time_tracker.animate.set_value(self.MOVE_KEYFRAME_END), run_time=run_time),
-            reveal_anim, lag_ratio=0.3)
+            return walk_in
+
+        reveal_anim = self.grid.reveal_tile(*new_position, axis=[new_position[1] - j, new_position[0] - i, 0])
+        return AnimationGroup(walk_in, reveal_anim, lag_ratio=0.3)
+
+    def bounce_and_die(self):
+        original_tile = self.grid.get_tile(*self.previous_position)
+        current_x, current_y = self.get_x(), self.get_y()
+        target_x, target_y = original_tile.get_x(), original_tile.get_y()
+
+        def bounce_update(mob, alpha):
+            mob.set_x(interpolate(current_x, target_x, alpha))
+            mob.set_y(interpolate(current_y, target_y, alpha))
+        bounce_back = UpdateFromAlphaFunc(self, bounce_update, run_time=0.3)
+
+        death_anim = UpdateFromAlphaFunc(
+            self.time_tracker,
+            lambda mob, alpha: mob.set_value(interpolate(self.DEATH_START, self.DEATH_END, alpha)),
+            run_time=0.6
+        )
+        return AnimationGroup(bounce_back, death_anim)
 
 
 class Monster(Sprite):
-    REVEAL_KEYFRAME_START = 0
-    REVEAL_KEYFRAME_END = 57 / 60
-    BURROW_KEYFRAME_START = REVEAL_KEYFRAME_END
-    BURROW_KEYFRAME_END = 118 / 60
+    FRAME_DURATION = 0.3
+    BOB_START = 0 * FRAME_DURATION
+    BOB_END = 1 * FRAME_DURATION
+    X_START = 2 * FRAME_DURATION
+    BURROW_START = 3 * FRAME_DURATION
 
     def __init__(self, grid, i, j, *args, **kwargs):
         self.grid = grid
         super().__init__(
-            os.path.join(SPRITES_DIRECTORY, "monster.gif"),
+            os.path.join(SPRITES_DIRECTORY, "MMonv2-Monster.gif"),
             height=self.grid.get_tile(i, j).get_height() * 0.8,
             *args,
             **kwargs
@@ -157,6 +201,7 @@ class Monster(Sprite):
         ).shift(
             OUT * 0.04
         )
+        self.set_time(self.BOB_START)
 
 
 class TurboGrid(Group):
@@ -166,8 +211,12 @@ class TurboGrid(Group):
         self.monster_positions = monster_positions
 
         self.tiles = Group(*[
-            Tile()
-            for _ in range(n * (n - 1))
+            Tile(
+                parity=((i % (n - 1)) + (i // (n - 1))) % 2,
+                finish_line=i // (n - 1) == n - 1,
+                has_monster=(i % (n - 1), i // (n - 1)) in self.monster_positions
+            )
+            for i in range(n * (n - 1))
         ]).arrange_in_grid(
             n_rows=n, n_cols=n - 1, buff=0
         ).set_z_index(0)
@@ -232,10 +281,9 @@ class TurboGrid(Group):
         monster_row = sorted(self.get_row(j), key=dist_to_monster_tile)
         monster_col.remove(monster_tile)
         monster_row.remove(monster_tile)
+        monster.set_time(monster.BOB_END)
         return AnimationGroup(
             monster_tile.reveal(),
-            self.turbo.opacity_tracker.animate(run_time=0.6).set_value(0.1),
-            monster.animate_set_time(monster.REVEAL_KEYFRAME_END, run_time=run_time),
             AnimationGroup(
                 AnimationGroup(*[
                     t.reveal()
@@ -300,11 +348,19 @@ def get_random_monster_positions(n):
     return monster_positions
 
 
+def get_monster_staircase(n):
+    return [(i, i + 1) for i in range(n - 2)]
+
+
+def get_monster_staircase_inverted(n):
+    return [(i, n - (i + 2)) for i in range(n - 2)]
+
+
 class TurboScene(InteractiveScene):
     def __init__(self, n, monster_positions, *args, **kwargs):
         super().__init__(*args, **kwargs)
         global SPRITES_DIRECTORY
-        SPRITES_DIRECTORY = os.path.join(self.file_writer.output_directory.parent, "Mitchell-Demos", "ManimPlaceholders")
+        SPRITES_DIRECTORY = os.path.join(self.file_writer.output_directory.parent, "Mitchell-Animations", "Manim Pixel Art v02")
 
         self.grid = TurboGrid(n, monster_positions)
         self.turbo = self.grid.turbo
@@ -317,16 +373,19 @@ class TurboScene(InteractiveScene):
         monster = self.grid.get_monster(*position)
         self.play(
             AnimationGroup(
-                self.turbo.move_to_start(),
-                monster.animate_set_time(monster.BURROW_KEYFRAME_END), lag_ratio=0.6)
+                self.turbo.bounce_and_die(),
+                self.grid.reveal_monster(*position)
+            )
         )
+        monster.set_time(monster.X_START)
+        self.play(self.turbo.move_to_start())
         return False
 
 
 class TurboTest(TurboScene, ThreeDScene):
     def __init__(self, *args, **kwargs):
         n = 6
-        super().__init__(n, [(i, i) for i in range(1, n - 1)], *args, **kwargs)
+        super().__init__(n, get_monster_staircase(n), *args, **kwargs)
 
     def construct(self):
         # Set the camera
@@ -381,7 +440,7 @@ class BruteForce(TurboScene, ThreeDScene):
         random.shuffle(shuffled_monsters)
         self.play(
             AnimationGroup(*[
-                monster.animate_set_time(monster.REVEAL_KEYFRAME_END)
+                monster.animate_set_time(monster.BOB_END)
                 for monster in shuffled_monsters
             ], lag_ratio=0.1),
             self.camera.frame.animate.reorient(0, 0, 0, (0, 0, 0), 16), run_time=2)
@@ -409,7 +468,7 @@ class BruteForce(TurboScene, ThreeDScene):
 
         self.play(
             AnimationGroup(*[
-                monster.animate_set_time(monster.REVEAL_KEYFRAME_START)
+                monster.animate_set_time(monster.BOB_START)
                 for monster in self.grid.monsters
             ])
         )
@@ -427,8 +486,10 @@ class BruteForce(TurboScene, ThreeDScene):
 
 class GetUnderneath(TurboScene, ThreeDScene):
     def __init__(self, *args, **kwargs):
-        random.seed(4)
+        random.seed(1)
         n = 15
+        # super().__init__(n, get_monster_staircase(n), *args, **kwargs)
+        # super().__init__(n, get_monster_staircase_inverted(n), *args, **kwargs)
         super().__init__(n, get_random_monster_positions(n), *args, **kwargs)
 
     def construct(self):
@@ -446,7 +507,7 @@ class GetUnderneath(TurboScene, ThreeDScene):
         random.shuffle(shuffled_monsters)
         self.play(
             AnimationGroup(*[
-                monster.animate_set_time(monster.REVEAL_KEYFRAME_END)
+                monster.animate_set_time(monster.BOB_END)
                 for monster in shuffled_monsters
             ], lag_ratio=0.1),
             self.camera.frame.animate.reorient(0, 0, 0, (0, 0, 0), 16), run_time=2)
@@ -455,7 +516,7 @@ class GetUnderneath(TurboScene, ThreeDScene):
         # Hide the monsters again
         self.play(
             AnimationGroup(*[
-                monster.animate_set_time(monster.REVEAL_KEYFRAME_START)
+                monster.animate_set_time(monster.BOB_START)
                 for monster in self.grid.monsters
             ])
         )
