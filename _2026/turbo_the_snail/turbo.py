@@ -231,8 +231,9 @@ class TurboGrid(Group):
         ]).set_z_index(200)
         self.add(self.turbo, self.monsters)
 
-    def create(self):
+    def create(self, run_time=None):
         tiles_sorted_from_center = sorted(self.tiles, key=lambda t: np.linalg.norm(t.get_center() - self.tiles.get_center()))
+        kwargs = {} if run_time is None else {"run_time": run_time}
         return AnimationGroup(
             *[
                 FadeIn(tile, shift=IN * 0.3)
@@ -240,7 +241,7 @@ class TurboGrid(Group):
             ],
             self.turbo.shift(OUT * 0.3).animate.shift(IN * 0.3),
             self.turbo.opacity_tracker.set_value(0).animate.set_value(1),
-            FadeIn(self.monsters), lag_ratio=0.1)
+            FadeIn(self.monsters), lag_ratio=0.1, **kwargs)
 
     def get_tile(self, i, j):
         if i < 0:
@@ -363,6 +364,7 @@ class TurboScene(InteractiveScene):
         SPRITES_DIRECTORY = os.path.join(self.file_writer.output_directory.parent, "Mitchell-Animations", "Manim Pixel Art v02")
 
         self.grid = TurboGrid(n, monster_positions)
+        self.grid.set_height(FRAME_HEIGHT * 0.9)
         self.turbo = self.grid.turbo
 
     def move_turbo(self, direction, *args, **kwargs):
@@ -420,7 +422,7 @@ class TurboTest(TurboScene, ThreeDScene):
             self.move_turbo(direction)
 
 
-class BruteForce(TurboScene, ThreeDScene):
+class BruteForce(TurboScene):
     def __init__(self, *args, **kwargs):
         n = 15
         random.seed(2)
@@ -428,12 +430,26 @@ class BruteForce(TurboScene, ThreeDScene):
 
     def construct(self):
         # Set the camera
-        self.camera.frame.reorient(26, 58, 0, (-0.19, -0.72, -0.82), 8.21)
+        self.camera.frame.save_state()
+        self.camera.frame.reorient(
+            -23, 53, 0,
+            self.grid.get_center(),
+            self.grid.get_height() * 0.6
+        )
 
         # Add the grid
+        brace = Brace(self.grid, UP)
         self.play(
-            self.camera.frame.animate.reorient(-10, 28, 0, (-0.05, -1.26, -1.02), 15.91),
-            self.grid.create(), run_time=4)
+            AnimationGroup(
+                AnimationGroup(
+                    self.camera.frame.animate(run_time=3.5).restore().scale(1.1, about_point=self.grid.get_bottom()),
+                    self.grid.create(run_time=3.5),
+                ),
+                GrowFromEdge(brace, DOWN, run_time=2),
+                lag_ratio=0.6
+            )
+        )
+        self.wait(0.5)
 
         # Show the initial positions of the monsters
         shuffled_monsters = list(self.grid.monsters)
@@ -442,8 +458,8 @@ class BruteForce(TurboScene, ThreeDScene):
             AnimationGroup(*[
                 monster.animate_set_time(monster.BOB_END)
                 for monster in shuffled_monsters
-            ], lag_ratio=0.1),
-            self.camera.frame.animate.reorient(0, 0, 0, (0, 0, 0), 16), run_time=2)
+            ], lag_ratio=0.1)
+        )
         self.wait(1)
 
         # Show how each column has at most one monster
@@ -458,7 +474,14 @@ class BruteForce(TurboScene, ThreeDScene):
         ).shift(
             OUT * 0.02
         )
-        self.play(FadeIn(rect), run_time=0.6)
+        self.play(
+            AnimationGroup(
+                FadeOut(brace),
+                self.camera.frame.animate(run_time=2).restore(),
+                FadeIn(rect, run_time=0.6),
+                lag_ratio = 0.6
+            ),
+        )
         free_columns = set(range(self.grid.n - 1))
         for (i, j) in self.grid.monster_positions:
             free_columns.remove(i)
