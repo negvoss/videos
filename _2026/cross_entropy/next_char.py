@@ -15,8 +15,11 @@ from functools import lru_cache
 CHAR_ALPHABET = "abcdefghijklmnopqrstuvwxyz .,'!?"
 # CHAR_ALPHABET = "abcdefghijklmnopqrstuvwxyz .,'!?0123456789-"
 
-NANOGPT_DIR = "/Users/grant/cs/nanoGPT"
-NANOGPT_CKPT = "/Users/grant/cs/nanoGPT/out-wiki-char/ckpt.pt"
+NANOGPT_DIR = R"C:\Users\aaron\3Blue1Brown Dropbox\3Blue1Brown\videos\2026\cross_entropy\nanoGPT"
+NANOGPT_CKPT = R"C:\Users\aaron\3Blue1Brown Dropbox\3Blue1Brown\videos\2026\cross_entropy\nanoGPT\out-wiki-char\ckpt.pt"
+
+# NANOGPT_DIR = "/Users/grant/cs/nanoGPT"
+# NANOGPT_CKPT = "/Users/grant/cs/nanoGPT/out-wiki-char/ckpt.pt"
 
 
 _nano_model = None

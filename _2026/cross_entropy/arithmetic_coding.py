@@ -578,6 +578,20 @@ class ProbababilityOfAWord(IntroduceCharacterModel):
         self.play(diagram.fade_in_new_layer())
         self.wait()
 
+        # Zoom in on the "a"
+        self.play(diagram.highlight_letter("a"))
+        self.play(diagram.zoom_in_on_letter("a"))
+        self.play(diagram.fade_in_new_layer())
+
+        # Zoom in on the "t"
+        self.play(diagram.highlight_letter("t"))
+        self.play(diagram.zoom_in_on_letter("t"))
+        self.play(diagram.fade_in_new_layer())
+
+        # Zoom in on the "h"
+        self.play(diagram.highlight_letter("h"))
+        self.play(diagram.zoom_in_on_letter("h"))
+
         # Say something to clarify meaning of width of each part of this second layer.
 
     def old_materal(self):
