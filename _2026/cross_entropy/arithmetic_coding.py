@@ -1,4 +1,5 @@
 import math
+from functools import lru_cache
 
 from manim_imports_ext import *
 from _2026.cross_entropy.distribution import DynamicInterval
@@ -14,6 +15,25 @@ def get_random_distribution(length):
     return dist
 
 
+@lru_cache(maxsize=None)
+def cached_next_char_distribution(context):
+    # Filling in branch layers can mean hundreds of model calls, many repeated across renders
+    return np.array(get_next_char_distribution(context), dtype=float)
+
+
+class RenormalizeAnimation(MoveToTarget):
+    def begin(self):
+        self.mobject.is_renormalizing = True
+        self.mobject.ids_in_transform = {id(mob) for mob in self.mobject.get_family()}
+        super().begin()
+
+    def finish(self):
+        super().finish()
+        self.mobject.is_renormalizing = False
+        self.mobject.ids_in_transform = set()
+        self.mobject.target = None
+
+
 class ArithmeticCodingDiagram(Group):
     def __init__(
         self,
@@ -27,6 +47,11 @@ class ArithmeticCodingDiagram(Group):
         context=" ",
     ):
         self.layers = VGroup()
+        self.branches = VGroup()
+        self.layer_by_prefix = dict()
+        self.min_branch_width = 0
+        self.is_renormalizing = False
+        self.ids_in_transform = set()
         self.intervals = VGroup()
         self.full_width = width
         self.show_decimal_labels = show_decimal_labels
@@ -45,29 +70,137 @@ class ArithmeticCodingDiagram(Group):
         self.char_labels_template = Text(char_alphabet)
         self.layers.add(self.get_new_layer(buff=SMALL_BUFF))
 
-        super().__init__(self.intervals, Point(), self.layers)
+        super().__init__(self.intervals, Point(), self.branches, self.layers)
+
+    def get_distribution(self, prefix):
+        return cached_next_char_distribution(self.context + prefix).copy()
 
     def get_new_layer(self, buff=0.1):
         if len(self.layers) == 0:
             mob_above = self.unit_interval[0]
         else:
             mob_above = self.get_letter_bar(self.curr_text[-1])
+        return self.make_layer(self.curr_text, mob_above, buff=buff)
 
-        full_context = self.context + self.curr_text
-        distribution = get_next_char_distribution(full_context)
-        # if len(full_context.strip()) == 0:
+    def make_layer(self, prefix, mob_above, buff=0.1, build_width=None):
+        distribution = self.get_distribution(prefix)
+        # if len((self.context + prefix).strip()) == 0:
         #     # Artificially suppress punctuation
         #     distribution[26:] *= 1e-3
         #     distribution /= sum(distribution)
 
+        target_width = mob_above.get_width()
         layer = StackedProbDistribution(
             distribution,
             labels=self.char_labels_template.copy(),
-            width=mob_above.get_width(),
+            width=build_width or target_width,
             label_height_ratio=self.label_to_bar_height_ratio
         )
+        if build_width is not None:
+            layer.stretch(target_width / layer.bars.get_width(), 0)
+            layer.reposition_labels()
         layer.next_to(mob_above, DOWN, buff=buff)
+
+        layer.prefix = prefix
+        layer.default_bar_style = [
+            (bar.get_fill_color(), bar.get_fill_opacity())
+            for bar in layer.bars
+        ]
+        first_bar = layer.bars[0]
+        layer.default_stroke_style = (
+            first_bar.get_stroke_color(),
+            float(first_bar.get_stroke_width()),
+            float(first_bar.get_stroke_opacity()),
+        )
+        self.layer_by_prefix[prefix] = layer
         return layer
+
+    def make_branch_layer(self, prefix, parent_bar, buff=0.1):
+        layer = self.make_layer(prefix, parent_bar, buff=buff, build_width=self.full_width)
+        self.update_bar_strokes(layer)
+        layer.highlight_state = "default"
+        layer.is_branch = True
+        layer.is_visible = False
+        return layer
+
+    def update_visible_path(self, value):
+        x = self.unit_interval.n2p(value)[0]
+        n_rows = len(self.layers)
+        path = {""}
+        prefix = ""
+        layer = self.layer_by_prefix[""]
+        while True:
+            index = int(np.clip(layer.x_value_to_index(x), 0, len(layer.bars) - 1))
+            child_prefix = prefix + self.char_alphabet[index]
+            if len(child_prefix) >= n_rows:
+                break
+            child = self.layer_by_prefix.get(child_prefix)
+            if child is None:
+                bar = layer.bars[index]
+                if bar.get_width() <= self.min_branch_width:
+                    break
+                child = self.make_branch_layer(child_prefix, bar)
+            self.set_layer_visibility(child, True)
+            if self.is_renormalizing and id(child.bars) not in self.ids_in_transform:
+                self.fit_layer_to_parent(child)
+            path.add(child_prefix)
+            prefix, layer = child_prefix, child
+
+        for other_prefix, other_layer in self.layer_by_prefix.items():
+            if other_prefix not in path:
+                self.set_layer_visibility(other_layer, False)
+
+    def show_all_layers(self):
+        for prefix in sorted(self.layer_by_prefix, key=len):
+            if prefix:
+                self.set_layer_visibility(self.layer_by_prefix[prefix], True)
+
+    def set_layer_visibility(self, layer, visible):
+        if getattr(layer, "is_visible", True) == visible:
+            return
+        is_branch = getattr(layer, "is_branch", False)
+        if visible:
+            if is_branch:
+                self.branches.add(layer)
+            else:
+                layer.set_submobjects(layer.stashed_submobjects)
+            self.fit_layer_to_parent(layer)
+        else:
+            self.reset_layer_style(layer)
+            layer.highlight_state = "default"
+            if is_branch:
+                self.branches.remove(layer)
+            else:
+                layer.stashed_submobjects = list(layer.submobjects)
+                layer.set_submobjects([])
+        layer.is_visible = visible
+
+    def fit_layer_to_parent(self, layer):
+        parent = self.layer_by_prefix[layer.prefix[:-1]]
+        bar = parent.bars[self.char_alphabet.index(layer.prefix[-1])]
+        layer.stretch(bar.get_width() / layer.bars.get_width(), 0)
+        layer.shift((bar.get_left()[0] - layer.bars.get_left()[0]) * RIGHT)
+        layer.reposition_labels()
+        self.update_bar_strokes(layer)
+        return layer
+
+    def update_bar_strokes(self, layer, min_width=0.05, sliver_stroke_width=1.0):
+        stroke_color, stroke_width, stroke_opacity = layer.default_stroke_style
+        for bar in layer.bars:
+            alpha = clip(bar.get_width() / min_width, 0, 1)
+            bar.set_stroke(
+                color=interpolate_color(bar.get_fill_color(), stroke_color, alpha),
+                width=interpolate(sliver_stroke_width, stroke_width, alpha),
+                opacity=interpolate(bar.get_fill_opacity(), stroke_opacity, alpha),
+            )
+        return layer
+
+    def get_sweep_range(self, mob, buff=0.01):
+        view = self.target if getattr(self, "target", None) is not None else self
+        view_mob = view.get_family()[self.get_family().index(mob)]
+        low = view.unit_interval.p2n(view_mob.get_left() + buff * RIGHT)
+        high = view.unit_interval.p2n(view_mob.get_right() + buff * LEFT)
+        return low, high
 
     def get_letter_bar(self, char, layer_index=-1):
         index = self.char_alphabet.index(char)
@@ -112,6 +245,70 @@ class ArithmeticCodingDiagram(Group):
             result += -math.log2(layer.distribution[self.char_alphabet.index(char)])
         return result
 
+    # Decoding values into words
+    def get_layer_chain(self, value):
+        x = self.unit_interval.n2p(value)[0]
+        chain = []
+        prefix = ""
+        while prefix in self.layer_by_prefix:
+            layer = self.layer_by_prefix[prefix]
+            if not getattr(layer, "is_visible", True):
+                break  # Its geometry may be stale; get_word_at_value decodes the rest numerically
+            index = int(np.clip(layer.x_value_to_index(x), 0, len(layer.bars) - 1))
+            chain.append((layer, index))
+            prefix += self.char_alphabet[index]
+        return chain, prefix
+
+    def decode_value(self, value, low, high, prefix="", n_chars=1):
+        result = ""
+        for _ in range(n_chars):
+            dist = self.get_distribution(prefix + result)
+            dist = dist / dist.sum()
+            cumulative = np.cumsum(dist)
+            alpha = (value - low) / (high - low) if high > low else 0
+            index = int(min(np.searchsorted(cumulative, alpha, side="right"), len(dist) - 1))
+            low, high = (
+                low + (high - low) * (cumulative[index] - dist[index]),
+                low + (high - low) * cumulative[index],
+            )
+            result += self.char_alphabet[index]
+        return result
+
+    def get_word_at_value(self, value, n_chars=None):
+        if n_chars is None:
+            n_chars = len(self.layers)
+        chain, prefix = self.get_layer_chain(value)
+        prefix = prefix[:n_chars]
+        if len(prefix) < n_chars:
+            parent, index = chain[-1]
+            bar = parent.bars[index]
+            low, high = (self.unit_interval.p2n(point) for point in (bar.get_left(), bar.get_right()))
+            prefix += self.decode_value(value, low, high, prefix, n_chars - len(prefix))
+        return prefix
+
+    def reset_layer_style(self, layer):
+        for bar, (color, opacity) in zip(layer.bars, layer.default_bar_style):
+            bar.set_fill(color, opacity)
+
+    def highlight_value(self, value, color=None, other_bar_opacity=0.35):
+        chain, _ = self.get_layer_chain(value)
+        chain_indices = {id(layer): index for layer, index in chain}
+        for layer in self.layer_by_prefix.values():
+            if not getattr(layer, "is_visible", True):
+                continue
+            new_state = chain_indices.get(id(layer), "default")
+            if new_state == "default" and getattr(layer, "highlight_state", None) == "default":
+                continue
+            self.reset_layer_style(layer)
+            if new_state != "default":
+                if color is None:
+                    layer.highlight(new_state, other_bar_opacity=other_bar_opacity)
+                else:
+                    layer.highlight(new_state, color, other_bar_opacity=other_bar_opacity)
+                # Keep thin bars' sliver outlines matching their new fill
+                self.update_bar_strokes(layer)
+            layer.highlight_state = new_state
+
     # Animations
     def renormalize_animation(
         self,
@@ -121,6 +318,7 @@ class ArithmeticCodingDiagram(Group):
         center=ORIGIN,
         center_curr_text=False,
         stretch_factor=None,
+        fade_thin_strokes=False,
         **kwargs
     ):
         big_interval = self.intervals[0]
@@ -139,16 +337,26 @@ class ArithmeticCodingDiagram(Group):
         for interval in self.target.intervals:
             interval.shift(x_shift)
             interval.stretch(stretch_factor, 0, about_point=ORIGIN)
-        for layer in self.target.layers:
+        for layer in [*self.target.layers, *self.target.branches]:
+            if not getattr(layer, "is_visible", True):
+                continue  # Emptied-out main layer; it gets refit when shown again
             layer.shift(x_shift)
             layer.stretch(stretch_factor, 0, about_point=ORIGIN)
             layer.reposition_labels()
+            if fade_thin_strokes:
+                self.update_bar_strokes(layer)
         if center_curr_text:
             for layer, char in zip(self.target.layers, self.curr_text):
-                label = layer[1][self.char_alphabet.index(char)]
-                label.match_x(center)
+                if not getattr(layer, "is_visible", True):
+                    continue
+                index = self.char_alphabet.index(char)
+                bar = layer.bars[index]
+                # Only pin labels whose bar actually spans the center. When zooming out,
+                # deeper letters in curr_text should sit at their natural positions.
+                if bar.get_left()[0] <= center[0] <= bar.get_right()[0]:
+                    layer[1][index].match_x(center)
 
-        return MoveToTarget(self, run_time=run_time, **kwargs)
+        return RenormalizeAnimation(self, run_time=run_time, **kwargs)
 
     def highlight_letter(
         self,
@@ -175,7 +383,9 @@ class ArithmeticCodingDiagram(Group):
     def zoom_in_on_letter(self, char, layer_index=-1, add_to_text=True, **kwargs):
         if add_to_text:
             idx = layer_index % len(self.layers)
-            self.curr_text = self.curr_text[:idx] + char
+            # Re-zooming on a letter already in the path leaves deeper letters alone
+            if idx >= len(self.curr_text) or self.curr_text[idx] != char:
+                self.curr_text = self.curr_text[:idx] + char
         return self.zoom_in_on_letter_range((char, char), layer_index=layer_index, **kwargs)
 
     def zoom_in_on_letter_range(self, letter_range, layer_index=-1, **kwargs):
@@ -719,6 +929,92 @@ class ProbabilityOfAWord(IntroduceCharacterModel):
         brace = Brace(diagram.get_letter_bar("h"), DOWN, buff=SMALL_BUFF)
         label = brace.get_tex(f"P(``math\")", font_size=40, buff=SMALL_BUFF)
         self.play(GrowFromEdge(brace, UP, run_time=2), TransformMatchingShapes(p_math, label, run_time=2))
+        self.wait(1)
+        self.play(FadeOut(VGroup(brace, label)))
+
+        # Show the slider going over the range again
+        h_bar = diagram.get_letter_bar("h")
+        x_tracker = ValueTracker(unit_interval.p2n(h_bar.get_left() + RIGHT * 0.01))
+        get_x = x_tracker.get_value
+        x_arrow = Vector(DOWN, thickness=5)
+        x_arrow.add_updater(lambda m: m.move_to(unit_interval.n2p(get_x()), DOWN))
+        x_arrow.set_z_index(-1)
+        x_dec = DecimalNumber(x_tracker.get_value(), num_decimal_places=7, font_size=17)
+        x_dec.f_always.set_value(get_x)
+        x_dec.always.next_to(x_arrow, UP, SMALL_BUFF)
+        for layer in diagram.layers:
+            layer.add_updater(lambda m: m.highlight(m.x_value_to_index(x_arrow.get_x())))
+
+        self.play(
+            VFadeIn(x_arrow, time_span=(0, 1)),
+            VFadeIn(x_dec, time_span=(0, 1)),
+            x_tracker.animate.set_value(unit_interval.p2n(h_bar.get_right())),
+            run_time=6
+        )
+        self.play(x_tracker.animate.set_value(unit_interval.p2n(h_bar.get_left() + RIGHT * 0.01)), run_time=6)
+
+        # Track the word as the x value changes
+        def get_word_mob(word):
+            mob = Text(f"|{word.replace(" ", "_")}|")
+            mob.to_edge(UP, buff=1.3)
+            mob.remove(mob[0], mob[-1])
+            return mob
+
+        def get_word():
+            word = ""
+            for layer in diagram.layers:
+                word += diagram.char_alphabet[layer.x_value_to_index(x_arrow.get_x())]
+            return get_word_mob(word)
+        word_tracker = always_redraw(get_word)
+        word_tracker.suspend_updating()
+        self.play(self.camera.frame.animate.shift(UP), FadeIn(word_tracker, shift=DOWN), run_time=2)
+        word_tracker.resume_updating()
+
+        t_zoom = diagram.zoom_in_on_letter("t", layer_index=2, run_time=2)
+        t_min, t_max = diagram.get_sweep_range(diagram.get_letter_bar("t", layer_index=2))
+        self.play(t_zoom, x_tracker.animate(run_time=9).set_value(t_min))
+        self.play(x_tracker.animate(run_time=5).set_value(t_max))
+
+        # Zoom out to the "ma" range
+        for layer in diagram.layers:
+            layer.clear_updaters()
+
+        def update_diagram_from_tracker(mob):
+            diagram.update_visible_path(get_x())
+            diagram.highlight_value(get_x())
+
+        highlighter = Mobject()
+        highlighter.add_updater(update_diagram_from_tracker)
+        self.remove(word_tracker)
+        word_tracker = always_redraw(
+            lambda: get_word_mob(diagram.get_word_at_value(get_x()).replace(" ", "_"))
+        )
+        self.add(highlighter, word_tracker)
+
+        math_value = unit_interval.p2n(h_bar.get_center())
+        a_zoom = diagram.zoom_in_on_letter(
+            "a", layer_index=1,
+            add_to_text=False,
+            fade_thin_strokes=True,
+            run_time=3,
+        )
+        a_min, a_max = diagram.get_sweep_range(diagram.get_letter_bar("a", layer_index=1))
+        self.play(a_zoom, x_tracker.animate(run_time=6).set_value(a_min))
+
+        # Sweep across every four letter word starting with "ma"
+        self.play(x_tracker.animate.set_value(a_max), run_time=12, rate_func=linear)
+        self.play(x_tracker.animate.set_value(math_value), run_time=6)
+        self.wait()
+
+        # Zoom all the way out to the unit interval
+        full_zoom = diagram.renormalize_animation(0, 1, fade_thin_strokes=True, run_time=2)
+        full_min, full_max = diagram.get_sweep_range(diagram.layers[0].bars)
+        self.play(full_zoom, x_tracker.animate(run_time=8).set_value(full_min))
+
+        # Sweep across every possible four letter word
+        self.play(x_tracker.animate.set_value(full_max), run_time=8, rate_func=linear)
+        self.play(x_tracker.animate.set_value(math_value), run_time=2)
+        self.wait()
 
 
 class SimpleZoom2(InteractiveScene):
