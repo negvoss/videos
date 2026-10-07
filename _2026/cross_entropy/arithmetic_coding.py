@@ -120,34 +120,35 @@ class ArithmeticCodingDiagram(Group):
         run_time=3,
         center=ORIGIN,
         center_curr_text=False,
+        stretch_factor=None,
         **kwargs
     ):
         big_interval = self.intervals[0]
         x_mid = (x_min + x_max) / 2
         p_left, p_mid, p_right = [big_interval.n2p(x) for x in (x_min, x_mid, x_max)]
 
-        stretch_factor = self.full_width / get_norm(p_right - p_left)
+        if stretch_factor is None:
+            stretch_factor = self.full_width / get_norm(p_right - p_left)
         x_shift = (center - p_mid)[0] * RIGHT
 
         self.populate_intervals(x_min, x_max)
         for interval in self.intervals:
             interval.update_opacity_from_width()
 
-        target = self.copy()
-
-        for interval in target.intervals:
+        self.generate_target()
+        for interval in self.target.intervals:
             interval.shift(x_shift)
             interval.stretch(stretch_factor, 0, about_point=ORIGIN)
-        for layer in target.layers:
+        for layer in self.target.layers:
             layer.shift(x_shift)
             layer.stretch(stretch_factor, 0, about_point=ORIGIN)
             layer.reposition_labels()
         if center_curr_text:
-            for layer, char in zip(target.layers, self.curr_text):
+            for layer, char in zip(self.target.layers, self.curr_text):
                 label = layer[1][self.char_alphabet.index(char)]
                 label.match_x(center)
 
-        return Transform(self, target, run_time=run_time, **kwargs)
+        return MoveToTarget(self, run_time=run_time, **kwargs)
 
     def highlight_letter(
         self,
@@ -172,11 +173,19 @@ class ArithmeticCodingDiagram(Group):
         return animation
 
     def zoom_in_on_letter(self, char, layer_index=-1, add_to_text=True, **kwargs):
-        bar = self.get_letter_bar(char, layer_index)
-        x_min = self.unit_interval.p2n(bar.get_left())
-        x_max = self.unit_interval.p2n(bar.get_right())
         if add_to_text:
-            self.curr_text += char
+            idx = layer_index % len(self.layers)
+            self.curr_text = self.curr_text[:idx] + char
+        return self.zoom_in_on_letter_range((char, char), layer_index=layer_index, **kwargs)
+
+    def zoom_in_on_letter_range(self, letter_range, layer_index=-1, **kwargs):
+        char1, char2 = letter_range
+        bar1 = self.get_letter_bar(char1, layer_index)
+        bar2 = self.get_letter_bar(char2, layer_index)
+        x_min = self.unit_interval.p2n(bar1.get_left())
+        x_max = self.unit_interval.p2n(bar2.get_right())
+        if x_min > x_max:
+            raise ValueError("Second letter in range must be alphabetically after first letter")
         return self.renormalize_animation(x_min, x_max, center_curr_text=True, **kwargs)
 
     def fade_in_new_layer(self, char=None, buff=0):
@@ -309,7 +318,7 @@ class IntroduceCharacterModel(InteractiveScene):
         self.play(
             LaggedStart(
                 (FadeTransform(dec1, dec2)
-                for dec1, dec2 in zip(bar_chart.dec_labels, new_dec_labels)),
+                 for dec1, dec2 in zip(bar_chart.dec_labels, new_dec_labels)),
                 group_type=Group,
                 **kw
             ),
@@ -375,6 +384,18 @@ class IntroduceCharacterModel(InteractiveScene):
                 dec.set_opacity(0)
         return dec_labels
 
+    def get_stacked_distribution_pct_labels(self, layer, font_size=12, num_decimal_places=2):
+        pct_labels = VGroup(
+            DecimalNumber(x * 100, font_size=font_size, num_decimal_places=num_decimal_places, unit=R"\%")
+            for x in layer.distribution
+        )
+        pct_labels.set_fill(GREY_B)
+        for pct, bar in zip(pct_labels, layer.bars):
+            pct.next_to(bar, DOWN, buff=SMALL_BUFF)
+            if pct.get_width() > bar.get_width():
+                pct.set_opacity(0)
+        return pct_labels
+
     def old_animations(self):
         for group in bar_chart:
             for mob in group:
@@ -393,7 +414,7 @@ class IntroduceCharacterModel(InteractiveScene):
         self.wait()
 
 
-class ProbababilityOfAWord(IntroduceCharacterModel):
+class ProbabilityOfAWord(IntroduceCharacterModel):
     interval_width = 12
 
     def construct(self):
@@ -510,7 +531,7 @@ class ProbababilityOfAWord(IntroduceCharacterModel):
 
         # Show "q"
         self.play(
-            diagram.renormalize_animation(0.6, 0.66),
+            diagram.zoom_in_on_letter_range(("p", "q"), stretch_factor=18),
             UpdateFromFunc(p_brace, lambda m: m.become(Brace(p_bar, DOWN))),
             UpdateFromFunc(p_brace_label, lambda m: m.next_to(p_brace, DOWN, SMALL_BUFF))
         )
@@ -564,7 +585,7 @@ class ProbababilityOfAWord(IntroduceCharacterModel):
         self.wait()
 
         p_math = Tex("P(``math\")?")
-        p_math.to_edge(UP)
+        p_math.to_edge(UP, buff=1)
         self.play(FadeIn(p_math, UP))
         self.wait()
 
@@ -573,52 +594,131 @@ class ProbababilityOfAWord(IntroduceCharacterModel):
         self.play(FadeOut(prob_label))
         self.play(
             diagram.zoom_in_on_letter("m"),
-            p_math.animate.set_opacity(0.5).to_corner(UL),
+            p_math.animate(path_arc=PI * 0.3).set_opacity(0.5).to_corner(DL, buff=0.5).fix_in_frame(),
         )
-        self.play(diagram.fade_in_new_layer())
+        self.play(diagram.fade_in_new_layer(), self.camera.frame.animate.match_y(diagram))
         self.wait()
+
+        # Show the domination of the vowels
+        pct_labels = self.get_stacked_distribution_pct_labels(diagram.layers[1], font_size=25)
+
+        def get_letter_pct_label(char):
+            brace = Brace(diagram.get_letter_bar(char), DOWN, buff=SMALL_BUFF)
+            label = pct_labels[diagram.char_alphabet.index(char)].next_to(brace, DOWN, buff=SMALL_BUFF)
+            return VGroup(brace, label)
+
+        pct_label = get_letter_pct_label("a")
+        self.play(
+            GrowFromCenter(pct_label[0]),
+            Write(pct_label[1]),
+        )
+        for letter in "eiou":
+            self.wait(0.5)
+            new_label = get_letter_pct_label(letter)
+            self.play(
+                ReplacementTransform(pct_label[0], new_label[0]),
+                FadeTransformPieces(pct_label[1], new_label[1]),
+            )
+            pct_label = new_label
+        self.wait(0.5)
+        self.play(FadeOut(pct_label))
+        self.wait(1)
+
+        # Zoom out to show the full width of the diagram
+        self.play(diagram.renormalize_animation(0, 1))
+        brace = Brace(diagram.layers[0], DOWN)
+        self.play(GrowFromEdge(brace, UP), FadeOut(diagram.layers[1]))
+
+        # Show the width of just the "m"
+        new_brace = Brace(diagram.get_letter_bar("m", layer_index=0))
+        label = new_brace.get_tex("P(``m\")", font_size=35)
+        self.play(AnimationGroup(brace.animate.become(new_brace), FadeIn(label), lag_ratio=0.6), run_time=2.5)
+
+        # Bring back the second layer
+        self.play(
+            AnimationGroup(
+                VGroup(brace, label).animate.align_to(diagram.layers[1].get_bottom() + DOWN * 0.1, UP),
+                FadeIn(diagram.layers[1]),
+                lag_ratio=0.3
+            )
+        )
+
+        # Renormalize around the "m" again
+        renormalize_anim = diagram.zoom_in_on_letter("m", layer_index=0)
+        new_brace = Brace(diagram.target.get_letter_bar("m", layer_index=0)).align_to(diagram.layers[1].get_bottom() + DOWN * 0.1, UP)
+        new_label = new_brace.get_tex("P(``m\")", font_size=35)
+        self.play(
+            renormalize_anim,
+            brace.animate(run_time=3).become(new_brace),
+            label.animate(run_time=3).become(new_label)
+        )
+
+        # Show the chain rule
+        new_brace = Brace(diagram.get_letter_bar("a"), DOWN, buff=SMALL_BUFF)
+        new_label = new_brace.get_tex(f"P(``m\") \\cdot P(``a\" | ``m\")", font_size=36, buff=SMALL_BUFF)
+        self.play(
+            ReplacementTransform(brace, new_brace),
+            TransformMatchingShapes(label, new_label),
+            run_time=1.7
+        )
+        brace, label = new_brace, new_label
+        self.wait(1)
+
+        # Show the two letter probabilities
+        def get_two_letter_prob_label(char):
+            brace = Brace(diagram.get_letter_bar(char), DOWN, buff=SMALL_BUFF)
+            label = brace.get_tex(f"P(``m{char}\")", font_size=36, buff=SMALL_BUFF)
+            return VGroup(brace, label)
+        two_letter_prob_label = get_two_letter_prob_label("a")
+        self.play(FadeOut(VGroup(brace, label)), FadeIn(two_letter_prob_label))
+        self.wait(1)
+        for letter in "eiou":
+            self.wait(0.5)
+            new_label = get_two_letter_prob_label(letter)
+            self.play(
+                ReplacementTransform(two_letter_prob_label[0], new_label[0]),
+                FadeTransformPieces(two_letter_prob_label[1], new_label[1]),
+            )
+            two_letter_prob_label = new_label
+        self.wait(0.5)
+        self.play(FadeOut(two_letter_prob_label))
+        self.wait(1)
 
         # Zoom in on the "a"
         self.play(diagram.highlight_letter("a"))
         self.play(diagram.zoom_in_on_letter("a"))
-        self.play(diagram.fade_in_new_layer())
+        self.play(diagram.fade_in_new_layer(), self.camera.frame.animate.match_y(diagram))
+
+        # Show the probabilities for the third layer
+        def get_three_letter_prob_label(char):
+            brace = Brace(diagram.get_letter_bar(char), DOWN, buff=SMALL_BUFF)
+            label = brace.get_tex(f"P(``ma{char}\")", font_size=36, buff=SMALL_BUFF)
+            return VGroup(brace, label)
+        three_letter_prob_label = get_three_letter_prob_label("d")
+        self.play(FadeIn(three_letter_prob_label))
+        for letter in "lnt":
+            self.wait(0.5)
+            new_label = get_three_letter_prob_label(letter)
+            self.play(
+                ReplacementTransform(three_letter_prob_label[0], new_label[0]),
+                FadeTransformPieces(three_letter_prob_label[1], new_label[1]),
+            )
+            three_letter_prob_label = new_label
+        self.wait(1)
 
         # Zoom in on the "t"
-        self.play(diagram.highlight_letter("t"))
+        self.play(FadeOut(three_letter_prob_label), diagram.highlight_letter("t"))
         self.play(diagram.zoom_in_on_letter("t"))
-        self.play(diagram.fade_in_new_layer())
+        self.play(diagram.fade_in_new_layer(), self.camera.frame.animate.match_y(diagram))
 
         # Zoom in on the "h"
         self.play(diagram.highlight_letter("h"))
         self.play(diagram.zoom_in_on_letter("h"))
 
-        # Say something to clarify meaning of width of each part of this second layer.
-
-    def old_materal(self):
-        # Earlier tests, just copied down here from construct for reference
-        self.add(diagram)
-        for letter in "mathematics":
-            self.play(diagram.highlight_letter(letter, color=TEAL))
-            self.play(diagram.zoom_in_on_letter(letter))
-            self.play(
-                diagram.fade_in_new_layer(),
-                self.frame.animate.shift(0.2 * DOWN)
-            )
-
-        # A few tests
-        diagram.get_conditional_probability("h")
-        diagram.get_absolute_information("math")
-        bar = diagram.get_letter_bar("e")
-        -np.log2(bar.get_width() / diagram.unit_interval[0].get_width())
-        self.play(diagram.zoom_in_on_letter("p", add_to_text=False))
-
-        # Some custom bounds
-        self.play(diagram.renormalize_animation(0.4, 0.5))
-        self.play(diagram.renormalize_animation(0.45, 0.46))
-        self.play(diagram.renormalize_animation(0.457, 0.458))
-        self.play(diagram.renormalize_animation(0.4, 0.5))
-        self.play(diagram.renormalize_animation(0, 1))
-
+        # Attach the probability label
+        brace = Brace(diagram.get_letter_bar("h"), DOWN, buff=SMALL_BUFF)
+        label = brace.get_tex(f"P(``math\")", font_size=40, buff=SMALL_BUFF)
+        self.play(GrowFromEdge(brace, UP, run_time=2), TransformMatchingShapes(p_math, label, run_time=2))
 
 
 class SimpleZoom2(InteractiveScene):
