@@ -322,11 +322,44 @@ class ArithmeticCodingDiagram(Group):
         for bar, (color, opacity) in zip(layer.bars, layer.default_bar_style):
             bar.set_fill(color, opacity)
 
+    # Fading layers out and bringing them back one at a time
+    def fade_out_layers(self, layers=None):
+        """
+        Fade out layers (all main layers by default) and mark them as faded, so later zooms
+        keep them invisible while still stretching them into place. Bring them back with
+        restore_layer.
+        """
+        if layers is None:
+            layers = self.layers
+        for layer in layers:
+            layer.is_faded = True
+        return VGroup(*layers).animate.set_opacity(0)
+
+    def restore_layer(self, layer_index, value, other_bar_opacity=0.35, **kwargs):
+        """
+        Fade a layer hidden by fade_out_layers back in, styled the same way highlight_value
+        styles it: labels fit to the layer's current width, and the bar containing value
+        highlighted. Since the style is rebuilt for the current geometry rather than saved
+        and restored, it comes out right however much zooming happened in between.
+        """
+        layer = self.layers[layer_index]
+        layer.is_faded = False
+        restyled = layer.copy()
+        restyled.set_opacity(1)
+        self.reset_layer_style(restyled)
+        restyled.reposition_labels()
+        x = self.unit_interval.n2p(value)[0]
+        index = int(np.clip(restyled.x_value_to_index(x), 0, len(restyled.bars) - 1))
+        restyled.highlight(index, other_bar_opacity=other_bar_opacity)
+        self.update_bar_strokes(restyled)
+        layer.highlight_state = index
+        return Transform(layer, restyled, **kwargs)
+
     def highlight_value(self, value, color=None, other_bar_opacity=0.35):
         chain, _ = self.get_layer_chain(value)
         chain_indices = {id(layer): index for layer, index in chain}
         for layer in self.layer_by_prefix.values():
-            if not getattr(layer, "is_visible", True):
+            if not getattr(layer, "is_visible", True) or getattr(layer, "is_faded", False):
                 continue
             new_state = chain_indices.get(id(layer), "default")
             if new_state == "default" and getattr(layer, "highlight_state", None) == "default":
@@ -407,6 +440,12 @@ class ArithmeticCodingDiagram(Group):
                 # deeper letters in curr_text should sit at their natural positions.
                 if bar.get_left()[0] <= center[0] <= bar.get_right()[0]:
                     layer[1][index].match_x(center)
+
+        # reposition_labels and update_bar_strokes set label and stroke opacities, which would
+        # bring faded layers' labels and outlines back mid-zoom. Re-hide them, last of all.
+        for layer in self.target.layers:
+            if getattr(layer, "is_faded", False):
+                layer.set_opacity(0)
 
         return RenormalizeAnimation(self, run_time=run_time, **kwargs)
 
@@ -822,9 +861,6 @@ class ProbabilityOfAWord(IntroduceCharacterModel):
         self.play(diagram.renormalize_animation(0, 1), run_time=2)
         self.wait()
 
-        # To do, let the x_tracker range over the full bar and add functionality to populate the relevant
-        # stack of letters underneath it.
-
         # Cycle through some letters, ask about P("math")
         def get_letter_prob_label(char):
             brace = Brace(diagram.get_letter_bar(char), DOWN, buff=SMALL_BUFF)
@@ -1008,17 +1044,14 @@ class ProbabilityOfAWord(IntroduceCharacterModel):
 
         # Track the word as the x value changes
         def get_word_mob(word):
-            mob = Text(f"|{word.replace(" ", "_")}|")
+            mob = Text(f"|{word.replace(" ", "_")}|").set_height(0.7)
             mob.to_edge(UP, buff=1.3)
             mob.remove(mob[0], mob[-1])
             return mob
 
-        def get_word():
-            word = ""
-            for layer in diagram.layers:
-                word += diagram.char_alphabet[layer.x_value_to_index(x_arrow.get_x())]
-            return get_word_mob(word)
-        word_tracker = always_redraw(get_word)
+        word_tracker = always_redraw(
+            lambda: get_word_mob(diagram.get_word_at_value(get_x()).replace(" ", "_"))
+        )
         word_tracker.suspend_updating()
         self.play(self.camera.frame.animate.shift(UP), FadeIn(word_tracker, shift=DOWN), run_time=2)
         word_tracker.resume_updating()
@@ -1038,11 +1071,7 @@ class ProbabilityOfAWord(IntroduceCharacterModel):
 
         highlighter = Mobject()
         highlighter.add_updater(update_diagram_from_tracker)
-        self.remove(word_tracker)
-        word_tracker = always_redraw(
-            lambda: get_word_mob(diagram.get_word_at_value(get_x()).replace(" ", "_"))
-        )
-        self.add(highlighter, word_tracker)
+        self.add(highlighter)
 
         math_value = unit_interval.p2n(h_bar.get_center())
         a_zoom = diagram.zoom_in_on_letter(
@@ -1055,17 +1084,52 @@ class ProbabilityOfAWord(IntroduceCharacterModel):
         self.play(a_zoom, move_tracker_through_zoom(diagram, x_tracker, a_min, run_time=6))
 
         # Sweep across every four letter word starting with "ma"
-        self.play(x_tracker.animate.set_value(a_max), run_time=12, rate_func=linear)
+        self.play(x_tracker.animate.set_value(a_max), run_time=4)
 
         # Zoom all the way out to the unit interval
         full_zoom = diagram.renormalize_animation(0, 1, fade_thin_strokes=True, run_time=2)
-        full_min, full_max = diagram.get_sweep_range(diagram.layers[0].bars)
-        self.play(full_zoom, move_tracker_through_zoom(diagram, x_tracker, full_min, run_time=8))
+        self.play(full_zoom, move_tracker_through_zoom(diagram, x_tracker, 0, run_time=8))
 
         # Sweep across every possible four letter word
-        self.play(x_tracker.animate.set_value(full_max), run_time=8, rate_func=linear)
+        self.play(x_tracker.animate.set_value(1), run_time=8)
         self.play(x_tracker.animate.set_value(math_value), run_time=2)
         self.wait()
+
+        # Clarify the decoding process
+        highlighter.suspend_updating()
+        word_tracker.suspend_updating()
+        self.play(diagram.fade_out_layers(), word_tracker.animate.set_opacity(0))
+        self.remove(word_tracker)
+        self.wait(1)
+
+        string = "math"
+        decoded = VGroup()
+        for i, letter in enumerate(string):
+            self.play(diagram.restore_layer(i, get_x()))
+            self.wait(0.5)
+            new_decoded = get_word_mob(string[:i + 1])
+            self.play(
+                *(ReplacementTransform(old, new) for old, new in zip(decoded, new_decoded)),
+                FadeIn(new_decoded[i], shift=0.25 * DOWN),
+            )
+            decoded = new_decoded
+            self.play(diagram.zoom_in_on_letter(letter, layer_index=i))
+
+        # Zoom back out to the full unit interval
+        self.play(diagram.renormalize_animation(0, 1, fade_thin_strokes=True, run_time=3))
+        self.wait()
+
+        # Hand the readout back to the live word tracker
+        self.remove(*decoded)
+        word_tracker.set_opacity(1)
+        self.add(word_tracker)
+
+        # Choose random values
+        highlighter.resume_updating()
+        word_tracker.resume_updating()
+        for _ in range(50):
+            x_tracker.set_value(random.random())
+            self.wait(1)
 
 
 class SimpleZoom2(InteractiveScene):
