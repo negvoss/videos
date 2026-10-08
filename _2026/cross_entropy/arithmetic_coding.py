@@ -34,6 +34,33 @@ class RenormalizeAnimation(MoveToTarget):
         self.mobject.target = None
 
 
+def move_tracker_through_zoom(diagram, tracker, end_value, run_time, rate_func=smooth):
+    """
+    Move tracker to end_value alongside a renormalize animation, interpolating the arrow's
+    on-screen x position rather than the value itself. The arrow glides from where it is now
+    to where end_value will sit once the zoom finishes, and each frame the value is whatever
+    lies under it in the current (mid-zoom) view. That keeps the tracker pointing at something
+    on screen, instead of racing out of view while the diagram is still zoomed in.
+
+    Create the zoom animation first (so diagram.target exists), and list it before this one in
+    the same self.play call, so the view has updated by the time the tracker reads it.
+    """
+    def screen_x(unit_interval, value):
+        return unit_interval.n2p(value)[0]
+
+    start_x = screen_x(diagram.unit_interval, tracker.get_value())
+    end_x = screen_x(diagram.target.unit_interval, end_value)
+
+    def update(mob, alpha):
+        x = interpolate(start_x, end_x, alpha)
+        # The unit interval maps linearly, so invert it from where 0 and 1 currently sit
+        x0 = screen_x(diagram.unit_interval, 0)
+        x1 = screen_x(diagram.unit_interval, 1)
+        mob.set_value((x - x0) / (x1 - x0))
+
+    return UpdateFromAlphaFunc(tracker, update, run_time=run_time, rate_func=rate_func)
+
+
 class ArithmeticCodingDiagram(Group):
     def __init__(
         self,
@@ -178,10 +205,15 @@ class ArithmeticCodingDiagram(Group):
     def fit_layer_to_parent(self, layer):
         parent = self.layer_by_prefix[layer.prefix[:-1]]
         bar = parent.bars[self.char_alphabet.index(layer.prefix[-1])]
+        return self.align_layer_to_bar(layer, bar)
+
+    def align_layer_to_bar(self, layer, bar, update_strokes=True):
+        # Stretch and shift layer so its bars span exactly the same x range as bar
         layer.stretch(bar.get_width() / layer.bars.get_width(), 0)
         layer.shift((bar.get_left()[0] - layer.bars.get_left()[0]) * RIGHT)
         layer.reposition_labels()
-        self.update_bar_strokes(layer)
+        if update_strokes:
+            self.update_bar_strokes(layer)
         return layer
 
     def update_bar_strokes(self, layer, min_width=0.05, sliver_stroke_width=1.0):
@@ -345,6 +377,26 @@ class ArithmeticCodingDiagram(Group):
             layer.reposition_labels()
             if fade_thin_strokes:
                 self.update_bar_strokes(layer)
+
+        # Stretching every layer independently by large factors lets float error creep in, so
+        # child layers slowly drift off their parent bars. Snap each visible child back onto its
+        # parent bar in the target (shallowest first), so every zoom ends exactly aligned.
+        target_of = dict(zip(map(id, self.get_family()), self.target.get_family()))
+        for prefix in sorted(self.layer_by_prefix, key=len):
+            if not prefix:
+                continue
+            layer = self.layer_by_prefix[prefix]
+            parent = self.layer_by_prefix.get(prefix[:-1])
+            if parent is None or not getattr(layer, "is_visible", True) or not getattr(parent, "is_visible", True):
+                continue
+            parent_bar = parent.bars[self.char_alphabet.index(prefix[-1])]
+            if id(layer) not in target_of or id(parent_bar) not in target_of:
+                continue
+            self.align_layer_to_bar(
+                target_of[id(layer)], target_of[id(parent_bar)],
+                update_strokes=fade_thin_strokes,
+            )
+
         if center_curr_text:
             for layer, char in zip(self.target.layers, self.curr_text):
                 if not getattr(layer, "is_visible", True):
@@ -934,7 +986,8 @@ class ProbabilityOfAWord(IntroduceCharacterModel):
 
         # Show the slider going over the range again
         h_bar = diagram.get_letter_bar("h")
-        x_tracker = ValueTracker(unit_interval.p2n(h_bar.get_left() + RIGHT * 0.01))
+        h_min, h_max = diagram.get_sweep_range(h_bar)
+        x_tracker = ValueTracker(h_min)
         get_x = x_tracker.get_value
         x_arrow = Vector(DOWN, thickness=5)
         x_arrow.add_updater(lambda m: m.move_to(unit_interval.n2p(get_x()), DOWN))
@@ -948,10 +1001,10 @@ class ProbabilityOfAWord(IntroduceCharacterModel):
         self.play(
             VFadeIn(x_arrow, time_span=(0, 1)),
             VFadeIn(x_dec, time_span=(0, 1)),
-            x_tracker.animate.set_value(unit_interval.p2n(h_bar.get_right())),
+            x_tracker.animate.set_value(h_max),
             run_time=6
         )
-        self.play(x_tracker.animate.set_value(unit_interval.p2n(h_bar.get_left() + RIGHT * 0.01)), run_time=6)
+        self.play(x_tracker.animate.set_value(h_min), run_time=6)
 
         # Track the word as the x value changes
         def get_word_mob(word):
@@ -999,17 +1052,15 @@ class ProbabilityOfAWord(IntroduceCharacterModel):
             run_time=3,
         )
         a_min, a_max = diagram.get_sweep_range(diagram.get_letter_bar("a", layer_index=1))
-        self.play(a_zoom, x_tracker.animate(run_time=6).set_value(a_min))
+        self.play(a_zoom, move_tracker_through_zoom(diagram, x_tracker, a_min, run_time=6))
 
         # Sweep across every four letter word starting with "ma"
         self.play(x_tracker.animate.set_value(a_max), run_time=12, rate_func=linear)
-        self.play(x_tracker.animate.set_value(math_value), run_time=6)
-        self.wait()
 
         # Zoom all the way out to the unit interval
         full_zoom = diagram.renormalize_animation(0, 1, fade_thin_strokes=True, run_time=2)
         full_min, full_max = diagram.get_sweep_range(diagram.layers[0].bars)
-        self.play(full_zoom, x_tracker.animate(run_time=8).set_value(full_min))
+        self.play(full_zoom, move_tracker_through_zoom(diagram, x_tracker, full_min, run_time=8))
 
         # Sweep across every possible four letter word
         self.play(x_tracker.animate.set_value(full_max), run_time=8, rate_func=linear)
