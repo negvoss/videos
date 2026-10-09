@@ -17,7 +17,6 @@ def get_random_distribution(length):
 
 @lru_cache(maxsize=None)
 def cached_next_char_distribution(context):
-    # Filling in branch layers can mean hundreds of model calls, many repeated across renders
     return np.array(get_next_char_distribution(context), dtype=float)
 
 
@@ -35,16 +34,6 @@ class RenormalizeAnimation(MoveToTarget):
 
 
 def move_tracker_through_zoom(diagram, tracker, end_value, run_time, rate_func=smooth):
-    """
-    Move tracker to end_value alongside a renormalize animation, interpolating the arrow's
-    on-screen x position rather than the value itself. The arrow glides from where it is now
-    to where end_value will sit once the zoom finishes, and each frame the value is whatever
-    lies under it in the current (mid-zoom) view. That keeps the tracker pointing at something
-    on screen, instead of racing out of view while the diagram is still zoomed in.
-
-    Create the zoom animation first (so diagram.target exists), and list it before this one in
-    the same self.play call, so the view has updated by the time the tracker reads it.
-    """
     def screen_x(unit_interval, value):
         return unit_interval.n2p(value)[0]
 
@@ -53,7 +42,6 @@ def move_tracker_through_zoom(diagram, tracker, end_value, run_time, rate_func=s
 
     def update(mob, alpha):
         x = interpolate(start_x, end_x, alpha)
-        # The unit interval maps linearly, so invert it from where 0 and 1 currently sit
         x0 = screen_x(diagram.unit_interval, 0)
         x1 = screen_x(diagram.unit_interval, 1)
         mob.set_value((x - x0) / (x1 - x0))
@@ -79,6 +67,7 @@ class ArithmeticCodingDiagram(Group):
         self.min_branch_width = 0
         self.is_renormalizing = False
         self.ids_in_transform = set()
+        self.intervals_hidden = False
         self.intervals = VGroup()
         self.full_width = width
         self.show_decimal_labels = show_decimal_labels
@@ -111,11 +100,6 @@ class ArithmeticCodingDiagram(Group):
 
     def make_layer(self, prefix, mob_above, buff=0.1, build_width=None):
         distribution = self.get_distribution(prefix)
-        # if len((self.context + prefix).strip()) == 0:
-        #     # Artificially suppress punctuation
-        #     distribution[26:] *= 1e-3
-        #     distribution /= sum(distribution)
-
         target_width = mob_above.get_width()
         layer = StackedProbDistribution(
             distribution,
@@ -208,7 +192,6 @@ class ArithmeticCodingDiagram(Group):
         return self.align_layer_to_bar(layer, bar)
 
     def align_layer_to_bar(self, layer, bar, update_strokes=True):
-        # Stretch and shift layer so its bars span exactly the same x range as bar
         layer.stretch(bar.get_width() / layer.bars.get_width(), 0)
         layer.shift((bar.get_left()[0] - layer.bars.get_left()[0]) * RIGHT)
         layer.reposition_labels()
@@ -277,7 +260,53 @@ class ArithmeticCodingDiagram(Group):
             result += -math.log2(layer.distribution[self.char_alphabet.index(char)])
         return result
 
-    # Decoding values into words
+    def get_text_interval(self, text):
+        low, high = 0.0, 1.0
+        for i, char in enumerate(text):
+            dist = self.get_distribution(text[:i])
+            dist = dist / dist.sum()
+            cumulative = np.cumsum(dist)
+            index = self.char_alphabet.index(char)
+            low, high = (
+                low + (high - low) * (cumulative[index] - dist[index]),
+                low + (high - low) * cumulative[index],
+            )
+        return low, high
+
+    @staticmethod
+    def get_binary_code(low, high, max_bits=60, contain_interval=False):
+        for n_bits in range(1, max_bits + 1):
+            k = math.ceil(low * 2**n_bits)
+            end = (k + 1) / 2**n_bits if contain_interval else k / 2**n_bits
+            if end <= high if contain_interval else end < high:
+                return format(k, f"0{n_bits}b")
+        raise ValueError("Interval too small to encode")
+
+    def show_text_path(self, text):
+        path = {""}
+        for i in range(1, len(text) + 1):
+            prefix = text[:i]
+            if prefix not in self.layer_by_prefix:
+                parent = self.layer_by_prefix[text[:i - 1]]
+                self.make_branch_layer(prefix, parent.bars[self.char_alphabet.index(text[i - 1])])
+            self.set_layer_visibility(self.layer_by_prefix[prefix], True)
+            path.add(prefix)
+        for prefix, layer in self.layer_by_prefix.items():
+            if prefix not in path:
+                self.set_layer_visibility(layer, False)
+        return [self.layer_by_prefix[prefix] for prefix in sorted(path, key=len)]
+
+    @staticmethod
+    def get_binary_digits(value, n_bits):
+        value = clip(value, 0, 1 - 1e-12)
+        bits = ""
+        for _ in range(n_bits):
+            value *= 2
+            bit = int(value)
+            bits += str(bit)
+            value -= bit
+        return bits
+
     def get_layer_chain(self, value):
         x = self.unit_interval.n2p(value)[0]
         chain = []
@@ -285,7 +314,7 @@ class ArithmeticCodingDiagram(Group):
         while prefix in self.layer_by_prefix:
             layer = self.layer_by_prefix[prefix]
             if not getattr(layer, "is_visible", True):
-                break  # Its geometry may be stale; get_word_at_value decodes the rest numerically
+                break
             index = int(np.clip(layer.x_value_to_index(x), 0, len(layer.bars) - 1))
             chain.append((layer, index))
             prefix += self.char_alphabet[index]
@@ -322,38 +351,52 @@ class ArithmeticCodingDiagram(Group):
         for bar, (color, opacity) in zip(layer.bars, layer.default_bar_style):
             bar.set_fill(color, opacity)
 
-    # Fading layers out and bringing them back one at a time
+    def hide_intervals(self):
+        self.intervals_hidden = True
+        self.intervals.suspend_updating()
+        return self.intervals.animate.set_opacity(0)
+
     def fade_out_layers(self, layers=None):
-        """
-        Fade out layers (all main layers by default) and mark them as faded, so later zooms
-        keep them invisible while still stretching them into place. Bring them back with
-        restore_layer.
-        """
         if layers is None:
             layers = self.layers
         for layer in layers:
             layer.is_faded = True
         return VGroup(*layers).animate.set_opacity(0)
 
-    def restore_layer(self, layer_index, value, other_bar_opacity=0.35, **kwargs):
-        """
-        Fade a layer hidden by fade_out_layers back in, styled the same way highlight_value
-        styles it: labels fit to the layer's current width, and the bar containing value
-        highlighted. Since the style is rebuilt for the current geometry rather than saved
-        and restored, it comes out right however much zooming happened in between.
-        """
-        layer = self.layers[layer_index]
+    def restyle_layer(self, layer, value, unit_interval=None, other_bar_opacity=0.35, center=None):
+        if unit_interval is None:
+            unit_interval = self.unit_interval
+        layer.set_opacity(1)
+        self.reset_layer_style(layer)
+        layer.reposition_labels()
+        x = unit_interval.n2p(value)[0]
+        index = int(np.clip(layer.x_value_to_index(x), 0, len(layer.bars) - 1))
+        layer.highlight(index, other_bar_opacity=other_bar_opacity)
+        if center is not None:
+            bar = layer.bars[index]
+            if bar.get_left()[0] <= center[0] <= bar.get_right()[0]:
+                layer[1][index].match_x(center)
+        self.update_bar_strokes(layer)
+        return index
+
+    def restore_layer(self, layer, value, other_bar_opacity=0.35, center=None, **kwargs):
+        if isinstance(layer, int):
+            layer = self.layers[layer]
         layer.is_faded = False
         restyled = layer.copy()
-        restyled.set_opacity(1)
-        self.reset_layer_style(restyled)
-        restyled.reposition_labels()
-        x = self.unit_interval.n2p(value)[0]
-        index = int(np.clip(restyled.x_value_to_index(x), 0, len(restyled.bars) - 1))
-        restyled.highlight(index, other_bar_opacity=other_bar_opacity)
-        self.update_bar_strokes(restyled)
-        layer.highlight_state = index
+        layer.highlight_state = self.restyle_layer(
+            restyled, value, other_bar_opacity=other_bar_opacity, center=center
+        )
         return Transform(layer, restyled, **kwargs)
+
+    def restore_layers_in_target(self, layers, value, other_bar_opacity=0.35, center=None):
+        target_of = dict(zip(map(id, self.get_family()), self.target.get_family()))
+        for layer in layers:
+            layer.is_faded = False
+            layer.highlight_state = self.restyle_layer(
+                target_of[id(layer)], value, self.target.unit_interval,
+                other_bar_opacity=other_bar_opacity, center=center,
+            )
 
     def highlight_value(self, value, color=None, other_bar_opacity=0.35):
         chain, _ = self.get_layer_chain(value)
@@ -370,7 +413,6 @@ class ArithmeticCodingDiagram(Group):
                     layer.highlight(new_state, other_bar_opacity=other_bar_opacity)
                 else:
                     layer.highlight(new_state, color, other_bar_opacity=other_bar_opacity)
-                # Keep thin bars' sliver outlines matching their new fill
                 self.update_bar_strokes(layer)
             layer.highlight_state = new_state
 
@@ -382,6 +424,7 @@ class ArithmeticCodingDiagram(Group):
         run_time=3,
         center=ORIGIN,
         center_curr_text=False,
+        center_text=None,
         stretch_factor=None,
         fade_thin_strokes=False,
         **kwargs
@@ -394,9 +437,10 @@ class ArithmeticCodingDiagram(Group):
             stretch_factor = self.full_width / get_norm(p_right - p_left)
         x_shift = (center - p_mid)[0] * RIGHT
 
-        self.populate_intervals(x_min, x_max)
-        for interval in self.intervals:
-            interval.update_opacity_from_width()
+        if not self.intervals_hidden:
+            self.populate_intervals(x_min, x_max)
+            for interval in self.intervals:
+                interval.update_opacity_from_width()
 
         self.generate_target()
         for interval in self.target.intervals:
@@ -404,16 +448,13 @@ class ArithmeticCodingDiagram(Group):
             interval.stretch(stretch_factor, 0, about_point=ORIGIN)
         for layer in [*self.target.layers, *self.target.branches]:
             if not getattr(layer, "is_visible", True):
-                continue  # Emptied-out main layer; it gets refit when shown again
+                continue
             layer.shift(x_shift)
             layer.stretch(stretch_factor, 0, about_point=ORIGIN)
             layer.reposition_labels()
             if fade_thin_strokes:
                 self.update_bar_strokes(layer)
 
-        # Stretching every layer independently by large factors lets float error creep in, so
-        # child layers slowly drift off their parent bars. Snap each visible child back onto its
-        # parent bar in the target (shallowest first), so every zoom ends exactly aligned.
         target_of = dict(zip(map(id, self.get_family()), self.target.get_family()))
         for prefix in sorted(self.layer_by_prefix, key=len):
             if not prefix:
@@ -431,21 +472,23 @@ class ArithmeticCodingDiagram(Group):
             )
 
         if center_curr_text:
-            for layer, char in zip(self.target.layers, self.curr_text):
-                if not getattr(layer, "is_visible", True):
+            center_text = self.curr_text
+        if center_text is not None:
+            for i, char in enumerate(center_text):
+                layer = self.layer_by_prefix.get(center_text[:i])
+                if layer is None or not getattr(layer, "is_visible", True) or id(layer) not in target_of:
                     continue
+                target_layer = target_of[id(layer)]
                 index = self.char_alphabet.index(char)
-                bar = layer.bars[index]
-                # Only pin labels whose bar actually spans the center. When zooming out,
-                # deeper letters in curr_text should sit at their natural positions.
+                bar = target_layer.bars[index]
                 if bar.get_left()[0] <= center[0] <= bar.get_right()[0]:
-                    layer[1][index].match_x(center)
+                    target_layer[1][index].match_x(center)
 
-        # reposition_labels and update_bar_strokes set label and stroke opacities, which would
-        # bring faded layers' labels and outlines back mid-zoom. Re-hide them, last of all.
-        for layer in self.target.layers:
+        for layer in [*self.target.layers, *self.target.branches]:
             if getattr(layer, "is_faded", False):
                 layer.set_opacity(0)
+        if self.intervals_hidden:
+            self.target.intervals.set_opacity(0)
 
         return RenormalizeAnimation(self, run_time=run_time, **kwargs)
 
@@ -474,7 +517,6 @@ class ArithmeticCodingDiagram(Group):
     def zoom_in_on_letter(self, char, layer_index=-1, add_to_text=True, **kwargs):
         if add_to_text:
             idx = layer_index % len(self.layers)
-            # Re-zooming on a letter already in the path leaves deeper letters alone
             if idx >= len(self.curr_text) or self.curr_text[idx] != char:
                 self.curr_text = self.curr_text[:idx] + char
         return self.zoom_in_on_letter_range((char, char), layer_index=layer_index, **kwargs)
@@ -715,7 +757,7 @@ class IntroduceCharacterModel(InteractiveScene):
         self.wait()
 
 
-class ProbabilityOfAWord(IntroduceCharacterModel):
+class ArithmeticCodingExplanation(IntroduceCharacterModel):
     interval_width = 12
 
     def construct(self):
@@ -1127,26 +1169,373 @@ class ProbabilityOfAWord(IntroduceCharacterModel):
         # Choose random values
         highlighter.resume_updating()
         word_tracker.resume_updating()
+        random.seed(1)
         for _ in range(50):
             x_tracker.set_value(random.random())
             self.wait(1)
 
+        # Set the tracker back to "math"
+        self.play(x_tracker.animate.set_value(math_value), run_time=2)
 
-class SimpleZoom2(InteractiveScene):
-    def construct(self):
-        # Test
-        diagram = ArithmeticCodingDiagram()
-        word = "compress"
-        self.add(diagram)
-        for letter in word:
-            self.play(diagram.highlight_letter(letter, color=BLUE_E))
-            self.play(
-                diagram.zoom_in_on_letter(letter),
-                run_time=1
-            )
-            self.play(
-                diagram.fade_in_new_layer(),
-                self.frame.animate.shift(0.5 * diagram.layers[0].get_height() * DOWN)
+        # Show the meaning of the first decimal digit
+        x_dec.clear_updaters()
+        self.play(x_dec.animate.scale(2).align_to(x_dec, DOWN))
+        self.play(x_dec[2].animate.set_color(YELLOW))
+        intervals = VGroup(*[
+            Line(unit_interval.n2p(0.1 * i), unit_interval.n2p(0.1 * (i + 1))).set_color(YELLOW)
+            for i in range(10)
+        ])
+        for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 8, 7, 6, 5, 4]:
+            self.remove(intervals)
+            self.add(intervals[i])
+            self.wait(0.1)
+        self.wait(1)
+        self.play(FadeOut(intervals[i]), x_dec[2].animate.set_color(WHITE))
+
+        # Helpers for converting to binary
+        highlighter.suspend_updating()
+        word_tracker.suspend_updating()
+        n2p = unit_interval.n2p
+        line_y = n2p(0)[1]
+        highlight_range = [0, 0.5]
+
+        def value_to_x(value):
+            ref_low, ref_high = highlight_range
+            x_low = n2p(ref_low)[0]
+            x_high = n2p(ref_high)[0]
+            return x_low + (value - ref_low) * (x_high - x_low) / (ref_high - ref_low)
+
+        def put_on_value_range(line, low_value, high_value, margin=1):
+            frame_left = frame.get_left()[0] - margin
+            frame_right = frame.get_right()[0] + margin
+            left = clip(value_to_x(low_value), frame_left, frame_right)
+            right = clip(value_to_x(high_value), frame_left, frame_right)
+            right = max(right, left + 1e-3)
+            line.set_points_by_ends(np.array([left, line_y, 0]), np.array([right, line_y, 0]))
+
+        binary_line = Line(n2p(0), n2p(1)).set_stroke(GREY_B, 2)
+        binary_line.add_updater(lambda m: put_on_value_range(m, 0, 1))
+
+        label_style = ["fraction"]
+
+        def get_dyadic_tex(numer, denom):
+            if numer == 0:
+                return "0"
+            if numer == denom:
+                return "1"
+            if label_style[0] == "fraction":
+                return Rf"\frac{{{numer}}}{{{denom}}}"
+            power = int(math.log2(denom))
+            while numer % 2 == 0:
+                numer //= 2
+                power -= 1
+            if numer == 1:
+                return Rf"2^{{-{power}}}"
+            return Rf"{numer} \cdot 2^{{-{power}}}"
+
+        def get_dyadic_mark(numer, denom):
+            level = max(int(math.log2(denom)) - 1, 0)
+            tick_height = max(0.3 * 0.85**level, 0.12)
+            font_size = 30
+            point = n2p(numer / denom)
+            tick = Line(point + 0.5 * tick_height * DOWN, point + 0.5 * tick_height * UP)
+            tick.set_stroke(GREY_B, 2)
+            label = Tex(get_dyadic_tex(numer, denom), font_size=font_size)
+            label.next_to(tick, UP, SMALL_BUFF)
+            label.set_backstroke(BLACK, 3)
+            mark = VGroup(tick, label)
+            mark.numer = numer
+            mark.denom = denom
+            mark.value = numer / denom
+
+            def update_mark(mark):
+                mark[0].move_to(n2p(mark.value))
+                mark[1].next_to(mark[0], UP, SMALL_BUFF)
+
+            mark.add_updater(update_mark)
+            return mark
+
+        def get_visible_value_range(margin=0.5):
+            x0 = n2p(0)[0]
+            x1 = n2p(1)[0]
+            half_width = frame.get_width() / 2 + margin
+            return [(frame.get_x() + sign * half_width - x0) / (x1 - x0) for sign in (-1, 1)]
+
+        def get_dyadic_marks(level):
+            denom = 2**level
+            low, high = get_visible_value_range()
+            numers = range(max(math.ceil(low * denom), 0), min(math.floor(high * denom), denom) + 1)
+            return VGroup(
+                get_dyadic_mark(numer, denom)
+                for numer in numers
+                if level == 1 or numer % 2 == 1
             )
 
-        # Calculate
+        def zoom_to_interval(low, high, screen_fraction=0.7, run_time=2, **kwargs):
+            mid = (low + high) / 2
+            span = (high - low) * diagram.full_width / (screen_fraction * frame.get_width())
+            return diagram.renormalize_animation(mid - span / 2, mid + span / 2, run_time=run_time, **kwargs)
+
+        def get_half(bit, low=0, high=1):
+            mid = (low + high) / 2
+            return (low, mid) if bit == "0" else (mid, high)
+
+        highlight = Line(n2p(0), n2p(0.5)).set_stroke(YELLOW, 5)
+        highlight.add_updater(lambda m: put_on_value_range(m, *highlight_range))
+
+        bin_scale = x_dec.get_height() / Text(".0", font="Consolas").get_height()
+        bin_center_x = x_dec.get_x()
+        bin_bottom_y = x_dec.get_bottom()[1] + UP
+
+        def get_binary_number(bits, highlight_last=True):
+            mob = Text("." + bits, font="Consolas").scale(bin_scale)
+            mob.set_x(bin_center_x)
+            mob.shift((bin_bottom_y - mob.get_bottom()[1]) * UP)
+            if highlight_last:
+                mob[-1].set_color(YELLOW)
+            return mob
+
+        level_marks = [get_dyadic_marks(1)]
+
+        # Convert everything to binary
+        self.play(
+            FadeOut(x_dec),
+            FadeOut(x_arrow),
+            FadeOut(word_tracker),
+            diagram.fade_out_layers(),
+            diagram.hide_intervals(),
+            FadeIn(binary_line),
+            FadeIn(level_marks[0]),
+            run_time=2,
+        )
+
+        code_path = diagram.show_text_path("cod")
+        for layer in code_path[1:]:
+            layer.is_faded = True
+            layer.set_opacity(0)
+        e_bar = code_path[-1].bars[diagram.char_alphabet.index("e")]
+        code_low = unit_interval.p2n(e_bar.get_left())
+        code_high = unit_interval.p2n(e_bar.get_right())
+        code_bits = diagram.get_binary_code(code_low, code_high)
+        n_bits = len(code_bits)
+        self.wait()
+
+        # Choose the first bit
+        binary_number = get_binary_number("0")
+        self.add(binary_number, highlight)
+        for bit in ("1", code_bits[0]) if code_bits[0] == "0" else ("1",):
+            self.wait(0.6)
+            self.remove(binary_number)
+            binary_number = get_binary_number(bit)
+            self.add(binary_number)
+            highlight_range[:] = get_half(bit)
+
+        bits = code_bits[0]
+        low, high = get_half(bits)
+
+        # Choose the remaining bits
+        for k in range(2, n_bits + 2):
+            step_time = 0.75 if k <= 3 else max(0.75 * 0.5**(k - 3), 0.1)
+            self.play(zoom_to_interval(low, high, run_time=2 * step_time))
+            if k > n_bits:
+                break
+
+            marks = get_dyadic_marks(k)
+            level_marks.append(marks)
+            self.play(FadeIn(marks), run_time=step_time)
+
+            bit = code_bits[k - 1]
+            bits += bit
+            low, high = get_half(bit, low, high)
+            self.remove(binary_number)
+            binary_number = get_binary_number(bits)
+            self.add(binary_number)
+            highlight_range[:] = [low, high]
+
+            if k == 3:
+                label_style[0] = "power"
+                new_level_marks = [
+                    VGroup(get_dyadic_mark(mark.numer, mark.denom) for mark in marks)
+                    for marks in level_marks
+                ]
+                self.play(
+                    FadeOut(VGroup(*level_marks)),
+                    FadeIn(VGroup(*new_level_marks)),
+                )
+                level_marks = new_level_marks
+
+        self.remove(binary_number)
+        binary_number = get_binary_number(bits, highlight_last=False)
+        self.add(binary_number)
+        self.wait()
+
+        binary_number_line = VGroup(binary_line, *level_marks)
+
+        # Show the range of real numbers
+        def get_aligned_binary_text(string):
+            text = Text(string, font="Consolas").scale(bin_scale)
+            text.align_to(binary_number, LEFT).align_to(binary_number, DOWN)
+            return text
+
+        long_text = get_aligned_binary_text("." + bits + "0" * 40)
+        n_trail = sum(glyph.get_left()[0] < frame.get_right()[0] for glyph in long_text[n_bits + 1:]) + 1
+        zeros = get_aligned_binary_text("." + bits + "0" * n_trail)[n_bits + 1:]
+        ones = get_aligned_binary_text("." + bits + "1" * n_trail)[n_bits + 1:]
+        continuation = VGroup(VGroup(zero, one) for zero, one in zip(zeros, ones))
+        continuation.set_color(TEAL)
+
+        arrow_tracker = ValueTracker(low)
+        trail_opacity_tracker = ValueTracker(0)
+        n_shown_tracker = ValueTracker(n_trail)
+
+        def get_n_shown():
+            return math.ceil(n_shown_tracker.get_value())
+
+        def get_shown_value():
+            scale = 2**(n_bits + get_n_shown())
+            return math.floor(arrow_tracker.get_value() * scale) / scale
+
+        def update_continuation(group):
+            extra = diagram.get_binary_digits(get_shown_value(), n_bits + n_trail)[n_bits:]
+            n_shown = get_n_shown()
+            for i, (slot, bit) in enumerate(zip(group, extra)):
+                opacity = trail_opacity_tracker.get_value() * (1 - i * 0.04) if i < n_shown else 0
+                slot[0].set_opacity(opacity if bit == "0" else 0)
+                slot[1].set_opacity(opacity if bit == "1" else 0)
+
+        arrow_tip_y = unit_interval.get_y()
+
+        range_arrow = Vector(DOWN, thickness=5)
+        range_arrow.set_z_index(-1)
+        range_arrow.add_updater(lambda m: m.move_to(
+            np.array([n2p(get_shown_value())[0], arrow_tip_y, 0]), DOWN
+        ))
+        arrow_opacity_tracker = ValueTracker(0)
+        range_arrow.add_updater(lambda m: m.set_opacity(arrow_opacity_tracker.get_value()))
+        continuation.add_updater(update_continuation)
+        self.add(range_arrow, continuation)
+        self.play(arrow_tracker.animate(run_time=2).set_value(high), arrow_opacity_tracker.animate.set_value(1))
+        self.play(arrow_tracker.animate(run_time=2).set_value(low))
+        interval_width = n2p(high)[0] - n2p(low)[0]
+        n_significant = sum(interval_width / 2**(i + 1) >= 0.02 for i in range(n_trail))
+        self.play(
+            arrow_tracker.animate(run_time=6).set_value(low + 0.93 * (high - low)),
+            trail_opacity_tracker.animate.set_value(0.8),
+            n_shown_tracker.animate(time_span=(4.5, 7), rate_func=rush_from).set_value(0),
+        )
+
+        # Bring back the diagram
+        self.remove(continuation)
+
+        code_zoom = diagram.renormalize_animation(code_low, code_high, center_text="code", run_time=3)
+        diagram.restore_layers_in_target(code_path, (code_low + code_high) / 2, center=ORIGIN)
+        binary_number.generate_target()
+        bits_brace = Brace(binary_number.target[1:], DOWN, buff=SMALL_BUFF)
+        bits_label = bits_brace.get_text(f"{n_bits} bits", font_size=30)
+        bits_shift = range_arrow.get_top()[1] + 0.35 - bits_label.get_bottom()[1]
+        VGroup(binary_number.target, bits_brace, bits_label).shift(bits_shift * UP)
+        code_word = get_word_mob("code")
+        code_word.next_to(binary_number.target, UP, buff=MED_SMALL_BUFF)
+        code_word.match_x(binary_number.target)
+        label_x_min = frame.get_left()[0] - 0.5
+        label_x_max = frame.get_right()[0] + 0.5
+        for layer in code_path:
+            for label in layer.labels:
+                label.set_x(clip(label.get_x(), label_x_min, label_x_max))
+        self.play(
+            code_zoom,
+            MoveToTarget(binary_number, run_time=2, time_span=(1, 3)),
+            FadeIn(code_word, shift=0.5 * DOWN, run_time=2, time_span=(1, 3)),
+        )
+        self.wait()
+
+        # Show the number of bits used for the word "code"
+        self.play(
+            GrowFromCenter(bits_brace),
+            FadeIn(bits_label, shift=0.25 * DOWN),
+        )
+        self.wait()
+
+        # Show that one fewer bit is not enough
+        short_numer = int(code_bits[:-1], 2)
+        red_range = [short_numer / 2**(n_bits - 1), (short_numer + 1) / 2**(n_bits - 1)]
+        old_range = list(highlight_range)
+
+        def update_highlight_range(mob, alpha):
+            highlight_range[:] = [interpolate(a, b, alpha) for a, b in zip(old_range, red_range)]
+
+        short_brace = Brace(binary_number[1:-1], DOWN, buff=SMALL_BUFF)
+        short_label = short_brace.get_text(f"{n_bits - 1} bits", font_size=30)
+        self.play(
+            zoom_to_interval(*red_range, run_time=2, center_text="code"),
+            UpdateFromAlphaFunc(highlight, update_highlight_range, run_time=2),
+            binary_number[-1].animate.set_opacity(0.2),
+            ReplacementTransform(bits_brace, short_brace, run_time=2),
+            FadeTransformPieces(bits_label, short_label, run_time=2),
+        )
+        bits_brace, bits_label = short_brace, short_label
+
+        target_lines = VGroup(
+            DashedLine(
+                np.array([x, e_bar.get_bottom()[1], 0]),
+                np.array([x, range_arrow.get_top()[1], 0]),
+            )
+            for x in (e_bar.get_left()[0], e_bar.get_right()[0])
+        )
+        target_lines.set_stroke(WHITE, 3)
+        self.play(
+            UpdateFromAlphaFunc(highlight, lambda m, a: m.set_stroke(interpolate_color(YELLOW, RED, a))),
+            ShowCreation(target_lines),
+        )
+        self.wait()
+
+        # Try the endpoints of the red interval
+        arrow_value = ValueTracker(get_shown_value())
+        range_arrow.clear_updaters()
+        range_arrow.add_updater(lambda m: m.move_to(
+            np.array([n2p(arrow_value.get_value())[0], arrow_tip_y, 0]), DOWN
+        ))
+        number_rect = SurroundingRectangle(binary_number[1:-1], buff=0.05)
+        number_rect.set_stroke(YELLOW, 3)
+        self.play(arrow_value.animate.set_value(red_range[0]), FadeIn(number_rect))
+        self.wait()
+
+        endpoint_numbers = [
+            get_aligned_binary_text("." + format(numer, f"0{n_bits - 1}b") + code_bits[-1])
+            for numer in (short_numer, short_numer + 1)
+        ]
+        for number in endpoint_numbers:
+            number[-1].set_opacity(0.2)
+
+        for i, side in enumerate([1, 0, 1, 0, 1]):
+            self.remove(binary_number)
+            binary_number = endpoint_numbers[side]
+            self.add(binary_number)
+            arrow_value.set_value(red_range[side])
+            self.wait(1 if i == 0 else 0.25)
+        self.wait()
+        self.play(FadeOut(number_rect))
+        self.wait()
+
+        # Bring back the last bit
+        full_number = get_aligned_binary_text("." + code_bits)
+        full_number[-1].set_opacity(0.2)
+        self.remove(binary_number)
+        binary_number = full_number
+        self.add(binary_number)
+
+        def update_yellow_highlight(mob, alpha):
+            highlight_range[:] = [interpolate(a, b, alpha) for a, b in zip(red_range, old_range)]
+            mob.set_stroke(interpolate_color(RED, YELLOW, alpha))
+
+        full_brace = Brace(binary_number[1:], DOWN, buff=SMALL_BUFF)
+        full_label = full_brace.get_text(f"{n_bits} bits", font_size=30)
+        self.play(
+            UpdateFromAlphaFunc(highlight, update_yellow_highlight),
+            binary_number[-1].animate.set_opacity(1),
+            ReplacementTransform(bits_brace, full_brace),
+            FadeTransformPieces(bits_label, full_label),
+            arrow_value.animate.set_value(int(code_bits, 2) / 2**n_bits),
+            run_time=1.5,
+        )
+        bits_brace, bits_label = full_brace, full_label
