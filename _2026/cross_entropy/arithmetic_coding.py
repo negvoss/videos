@@ -427,11 +427,13 @@ class ArithmeticCodingDiagram(Group):
         center_text=None,
         stretch_factor=None,
         fade_thin_strokes=False,
+        point_func=None,
         **kwargs
     ):
-        big_interval = self.intervals[0]
+        if point_func is None:
+            point_func = self.intervals[0].n2p
         x_mid = (x_min + x_max) / 2
-        p_left, p_mid, p_right = [big_interval.n2p(x) for x in (x_min, x_mid, x_max)]
+        p_left, p_mid, p_right = [point_func(x) for x in (x_min, x_mid, x_max)]
 
         if stretch_factor is None:
             stretch_factor = self.full_width / get_norm(p_right - p_left)
@@ -1309,28 +1311,29 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
             run_time=2,
         )
 
-        code_path = diagram.show_text_path("cod")
-        for layer in code_path[1:]:
+        word = "math"
+        word_path = diagram.show_text_path(word[:-1])
+        for layer in word_path[1:]:
             layer.is_faded = True
             layer.set_opacity(0)
-        e_bar = code_path[-1].bars[diagram.char_alphabet.index("e")]
-        code_low = unit_interval.p2n(e_bar.get_left())
-        code_high = unit_interval.p2n(e_bar.get_right())
-        code_bits = diagram.get_binary_code(code_low, code_high)
-        n_bits = len(code_bits)
+        last_bar = word_path[-1].bars[diagram.char_alphabet.index(word[-1])]
+        word_low = unit_interval.p2n(last_bar.get_left())
+        word_high = unit_interval.p2n(last_bar.get_right())
+        word_bits = diagram.get_binary_code(word_low, word_high)
+        n_bits = len(word_bits)
         self.wait()
 
         # Choose the first bit
         binary_number = get_binary_number("0")
         self.add(binary_number, highlight)
-        for bit in ("1", code_bits[0]) if code_bits[0] == "0" else ("1",):
+        for bit in ("1", word_bits[0]) if word_bits[0] == "0" else ("1",):
             self.wait(0.6)
             self.remove(binary_number)
             binary_number = get_binary_number(bit)
             self.add(binary_number)
             highlight_range[:] = get_half(bit)
 
-        bits = code_bits[0]
+        bits = word_bits[0]
         low, high = get_half(bits)
 
         # Choose the remaining bits
@@ -1344,7 +1347,7 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
             level_marks.append(marks)
             self.play(FadeIn(marks), run_time=step_time)
 
-            bit = code_bits[k - 1]
+            bit = word_bits[k - 1]
             bits += bit
             low, high = get_half(bit, low, high)
             self.remove(binary_number)
@@ -1427,29 +1430,29 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
         # Bring back the diagram
         self.remove(continuation)
 
-        code_zoom = diagram.renormalize_animation(code_low, code_high, center_text="code", run_time=3)
-        diagram.restore_layers_in_target(code_path, (code_low + code_high) / 2, center=ORIGIN)
+        word_zoom = diagram.renormalize_animation(word_low, word_high, center_text=word, run_time=3)
+        diagram.restore_layers_in_target(word_path, (word_low + word_high) / 2, center=ORIGIN)
         binary_number.generate_target()
         bits_brace = Brace(binary_number.target[1:], DOWN, buff=SMALL_BUFF)
         bits_label = bits_brace.get_text(f"{n_bits} bits", font_size=30)
         bits_shift = range_arrow.get_top()[1] + 0.35 - bits_label.get_bottom()[1]
         VGroup(binary_number.target, bits_brace, bits_label).shift(bits_shift * UP)
-        code_word = get_word_mob("code")
-        code_word.next_to(binary_number.target, UP, buff=MED_SMALL_BUFF)
-        code_word.match_x(binary_number.target)
+        word_mob = get_word_mob(word)
+        word_mob.next_to(binary_number.target, UP, buff=MED_SMALL_BUFF)
+        word_mob.match_x(binary_number.target)
         label_x_min = frame.get_left()[0] - 0.5
         label_x_max = frame.get_right()[0] + 0.5
-        for layer in code_path:
+        for layer in word_path:
             for label in layer.labels:
                 label.set_x(clip(label.get_x(), label_x_min, label_x_max))
         self.play(
-            code_zoom,
+            word_zoom,
             MoveToTarget(binary_number, run_time=2, time_span=(1, 3)),
-            FadeIn(code_word, shift=0.5 * DOWN, run_time=2, time_span=(1, 3)),
+            FadeIn(word_mob, shift=0.5 * DOWN, run_time=2, time_span=(1, 3)),
         )
         self.wait()
 
-        # Show the number of bits used for the word "code"
+        # Show the number of bits used for the word
         self.play(
             GrowFromCenter(bits_brace),
             FadeIn(bits_label, shift=0.25 * DOWN),
@@ -1457,7 +1460,7 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
         self.wait()
 
         # Show that one fewer bit is not enough
-        short_numer = int(code_bits[:-1], 2)
+        short_numer = int(word_bits[:-1], 2)
         red_range = [short_numer / 2**(n_bits - 1), (short_numer + 1) / 2**(n_bits - 1)]
         old_range = list(highlight_range)
 
@@ -1467,7 +1470,7 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
         short_brace = Brace(binary_number[1:-1], DOWN, buff=SMALL_BUFF)
         short_label = short_brace.get_text(f"{n_bits - 1} bits", font_size=30)
         self.play(
-            zoom_to_interval(*red_range, run_time=2, center_text="code"),
+            zoom_to_interval(*red_range, run_time=2, center_text=word),
             UpdateFromAlphaFunc(highlight, update_highlight_range, run_time=2),
             binary_number[-1].animate.set_opacity(0.2),
             ReplacementTransform(bits_brace, short_brace, run_time=2),
@@ -1477,10 +1480,10 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
 
         target_lines = VGroup(
             DashedLine(
-                np.array([x, e_bar.get_bottom()[1], 0]),
+                np.array([x, last_bar.get_bottom()[1], 0]),
                 np.array([x, range_arrow.get_top()[1], 0]),
             )
-            for x in (e_bar.get_left()[0], e_bar.get_right()[0])
+            for x in (last_bar.get_left()[0], last_bar.get_right()[0])
         )
         target_lines.set_stroke(WHITE, 3)
         self.play(
@@ -1501,7 +1504,7 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
         self.wait()
 
         endpoint_numbers = [
-            get_aligned_binary_text("." + format(numer, f"0{n_bits - 1}b") + code_bits[-1])
+            get_aligned_binary_text("." + format(numer, f"0{n_bits - 1}b") + word_bits[-1])
             for numer in (short_numer, short_numer + 1)
         ]
         for number in endpoint_numbers:
@@ -1518,7 +1521,7 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
         self.wait()
 
         # Bring back the last bit
-        full_number = get_aligned_binary_text("." + code_bits)
+        full_number = get_aligned_binary_text("." + word_bits)
         full_number[-1].set_opacity(0.2)
         self.remove(binary_number)
         binary_number = full_number
@@ -1535,7 +1538,276 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
             binary_number[-1].animate.set_opacity(1),
             ReplacementTransform(bits_brace, full_brace),
             FadeTransformPieces(bits_label, full_label),
-            arrow_value.animate.set_value(int(code_bits, 2) / 2**n_bits),
+            arrow_value.animate.set_value(int(word_bits, 2) / 2**n_bits),
             run_time=1.5,
         )
         bits_brace, bits_label = full_brace, full_label
+
+        # Pin the trackers to the screen
+        full_word = "mathematics"
+        fixed_center = frame.get_center().copy()
+        fixed_scale = FRAME_HEIGHT / frame.get_height()
+
+        def fix_to_screen(mob):
+            mob.shift(-fixed_center)
+            mob.scale(fixed_scale, about_point=ORIGIN)
+            mob.fix_in_frame()
+            return mob
+
+        bin_ref = binary_number.copy()
+        fix_to_screen(binary_number)
+        fix_to_screen(word_mob)
+        fix_to_screen(VGroup(bits_brace, bits_label))
+
+        # Show the avg bits per character
+        avg_frac = Tex(R"\displaystyle\frac{14 \text{ bits}}{|\text{``math''}|}", font_size=32)
+        avg_value = Tex(R"= 3.5 \text{ bits/char}", font_size=32)
+        avg_value.next_to(avg_frac, DOWN, buff=0.25, aligned_edge=LEFT)
+        avg_bits_per_char = VGroup(avg_frac, avg_value)
+        fix_to_screen(avg_bits_per_char)
+        avg_bits_per_char.align_to(word_mob, UP).to_edge(RIGHT, buff=1)
+        copy = bits_label.copy()
+        self.play(
+            AnimationGroup(
+                copy.animate(path_arc=PI * 0.3).match_width(avg_frac[:6]).move_to(avg_frac[:6]),
+                GrowFromCenter(avg_frac[6]),
+                AnimationGroup(
+                    TransformFromCopy(word_mob, avg_frac[10:14], path_arc=PI * 0.3),
+                    FadeIn(VGroup(avg_frac[7:10], avg_frac[14:17])),
+                    lag_ratio=0.6
+                ),
+                Write(avg_value),
+                lag_ratio=0.5
+            )
+        )
+        self.add(avg_bits_per_char)
+        self.remove(copy)
+        self.wait(1)
+        self.play(FadeOut(VGroup(bits_brace, bits_label, avg_bits_per_char)))
+
+        # Helpers for extending the word
+        def get_world_binary(bit_str):
+            text = Text("." + bit_str, font="Consolas").scale(bin_scale)
+            text.match_x(bin_ref).align_to(bin_ref, DOWN)
+            return text
+
+        def get_screen_binary(bit_str, n_new=0):
+            text = get_world_binary(bit_str)
+            if n_new > 0:
+                text[-n_new:].set_color(YELLOW)
+            return fix_to_screen(text)
+
+        def get_screen_word(text):
+            mob = get_word_mob(text)
+            mob.next_to(bin_ref, UP, buff=MED_SMALL_BUFF)
+            mob.match_x(bin_ref)
+            return fix_to_screen(mob)
+
+        x_ref = {"bar": last_bar, "range": (word_low, word_high)}
+
+        def value_to_x(value):
+            bar = x_ref["bar"]
+            ref_low, ref_high = x_ref["range"]
+            x_low = bar.get_left()[0]
+            x_high = bar.get_right()[0]
+            return x_low + (value - ref_low) * (x_high - x_low) / (ref_high - ref_low)
+
+        def n2p(value):
+            return np.array([value_to_x(value), line_y, 0])
+
+        arrow_top_y = range_arrow.get_top()[1]
+        line_bars = {"start": last_bar, "end": last_bar}
+        line_alpha = ValueTracker(1)
+
+        def get_line_params(bar):
+            return np.array([bar.get_left()[0], bar.get_right()[0], bar.get_bottom()[1]])
+
+        def update_target_lines(lines):
+            x_left, x_right, y_bottom = interpolate(
+                get_line_params(line_bars["start"]),
+                get_line_params(line_bars["end"]),
+                line_alpha.get_value(),
+            )
+            new_lines = VGroup(
+                DashedLine(np.array([x, y_bottom, 0]), np.array([x, arrow_top_y, 0]))
+                for x in (x_left, x_right)
+            )
+            new_lines.set_stroke(WHITE, 3)
+            lines.become(new_lines)
+
+        target_lines.set_z_index(10)
+        target_lines.add_updater(update_target_lines)
+        self.add(line_alpha)
+
+        def zoom_to_world_width(low, high, world_width, **kwargs):
+            mid = (low + high) / 2
+            span = (high - low) * diagram.full_width / world_width
+            return diagram.renormalize_animation(
+                mid - span / 2, mid + span / 2, point_func=n2p, run_time=1.5, **kwargs
+            )
+
+        def get_cell(bit_str):
+            numer = int(bit_str, 2)
+            denom = 2**len(bit_str)
+            return [numer / denom, (numer + 1) / denom]
+
+        def get_cell_update(start_range, end_range):
+            def update(mob, alpha):
+                highlight_range[:] = [interpolate(a, b, alpha) for a, b in zip(start_range, end_range)]
+                mob.set_stroke(interpolate_color(RED, YELLOW, alpha))
+            return update
+
+        # Extend to the full word
+        prefix = word
+        word_range = (word_low, word_high)
+        target_bar = last_bar
+        shown_bits = word_bits
+        view = (tuple(red_range), 0.7 * frame.get_width())
+        for char in full_word[len(word):]:
+            new_layer = diagram.make_layer(prefix, target_bar)
+            diagram.align_layer_to_bar(new_layer, target_bar)
+            diagram.layers.add(new_layer)
+            index = diagram.char_alphabet.index(char)
+            target_bar = new_layer.bars[index]
+            x0 = new_layer.bars.get_left()[0]
+            x1 = new_layer.bars.get_right()[0]
+            range_low, range_high = word_range
+            word_range = tuple(
+                range_low + (range_high - range_low) * (x - x0) / (x1 - x0)
+                for x in (target_bar.get_left()[0], target_bar.get_right()[0])
+            )
+            prefix += char
+            code = diagram.get_binary_code(*word_range)
+            needs_bits = len(code) > len(shown_bits)
+
+            camera_anims = []
+            frame_width = frame.get_width()
+            needed_bottom = new_layer.get_bottom()[1] - 0.75
+            frame_bottom = frame.get_y() - frame.get_height() / 2
+            if needed_bottom < frame_bottom:
+                zoom = (arrow_top_y - needed_bottom) / (arrow_top_y - frame_bottom)
+                frame_width *= zoom
+                camera_anims.append(frame.animate.set_height(zoom * frame.get_height()).set_y(
+                    arrow_top_y - zoom * (arrow_top_y - frame.get_y())
+                ))
+
+            new_layer.set_opacity(0)
+            new_layer.highlight_state = index
+            x_ref["bar"] = target_bar
+            x_ref["range"] = word_range
+            if not needs_bits:
+                view = (word_range, 0.6 * frame_width)
+            layer_zoom = zoom_to_world_width(*view[0], view[1], center_text=prefix)
+            target_of = dict(zip(map(id, diagram.get_family()), diagram.target.get_family()))
+            target_layer = target_of[id(new_layer)]
+            target_layer.set_opacity(1)
+            diagram.reset_layer_style(target_layer)
+            target_layer.reposition_labels()
+            target_layer.highlight(index, other_bar_opacity=0.35)
+            target_bar_copy = target_layer.bars[index]
+            if target_bar_copy.get_left()[0] <= 0 <= target_bar_copy.get_right()[0]:
+                target_layer[1][index].match_x(ORIGIN)
+            diagram.update_bar_strokes(target_layer)
+
+            line_bars["start"] = line_bars["end"]
+            line_bars["end"] = target_bar
+            line_alpha.set_value(0)
+            new_word = get_screen_word(prefix)
+            self.play(
+                layer_zoom,
+                *camera_anims,
+                line_alpha.animate.set_value(1),
+                *(ReplacementTransform(a, b) for a, b in zip(word_mob, new_word)),
+                FadeIn(new_word[-1], shift=0.25 * DOWN),
+                run_time=1.5,
+            )
+            line_bars["start"] = target_bar
+            self.remove(*new_word)
+            self.add(new_word)
+            word_mob = new_word
+
+            for n_shown in range(len(shown_bits) + 1, len(code) + 1):
+                step_bits = code[:n_shown]
+                red_anims = [UpdateFromAlphaFunc(highlight, lambda m, a: m.set_stroke(interpolate_color(YELLOW, RED, a)))]
+                while len(level_marks) < n_shown:
+                    marks = get_dyadic_marks(len(level_marks) + 1)
+                    level_marks.append(marks)
+                    if len(marks) > 0:
+                        red_anims.append(FadeIn(marks))
+                self.play(*red_anims, run_time=0.5)
+
+                n_same = next(
+                    (i for i, (a, b) in enumerate(zip(shown_bits, step_bits)) if a != b),
+                    len(shown_bits),
+                )
+                old_number = binary_number
+                new_number = get_screen_binary(step_bits, n_new=len(step_bits) - n_same)
+                new_cell = get_cell(step_bits)
+                self.play(
+                    UpdateFromAlphaFunc(highlight, get_cell_update(list(highlight_range), new_cell)),
+                    arrow_value.animate.set_value(new_cell[0]),
+                    *(ReplacementTransform(a, b) for a, b in zip(old_number, new_number)),
+                    FadeIn(new_number[len(old_number):]),
+                    run_time=0.75,
+                )
+                self.remove(old_number, *new_number)
+                binary_number = new_number
+                self.add(binary_number)
+                shown_bits = step_bits
+
+            if needs_bits:
+                view = (word_range, 0.6 * frame.get_width())
+                self.play(zoom_to_world_width(*view[0], view[1], center_text=prefix))
+            self.wait(0.5)
+
+        new_number = get_screen_binary(shown_bits)
+        self.remove(binary_number)
+        binary_number = new_number
+        self.add(binary_number)
+        self.wait()
+
+        # Show the number of bits for the full word
+        total_bits = len(shown_bits)
+        world_number = get_world_binary(shown_bits)
+        bits_brace = Brace(world_number[1:], DOWN, buff=SMALL_BUFF)
+        bits_label = bits_brace.get_text(f"{total_bits} bits", font_size=30)
+        fix_to_screen(VGroup(bits_brace, bits_label))
+        self.play(
+            GrowFromCenter(bits_brace),
+            FadeIn(bits_label, shift=0.25 * DOWN),
+        )
+        self.wait()
+
+        # Show the avg bits per character for the full word
+        avg_number = total_bits / len(full_word)
+        avg_str = f"{avg_number:.2f}"
+        relation = "=" if abs(avg_number - float(avg_str)) < 1e-9 else R"\approx"
+        full_frac = Tex(
+            Rf"\displaystyle\frac{{{total_bits} \text{{ bits}}}}{{|\text{{``{full_word}''}}|}}",
+            font_size=32,
+        )
+        full_value = Tex(Rf"{relation} {avg_str} \text{{ bits/char}}", font_size=32)
+        full_value.next_to(full_frac, DOWN, buff=0.25, aligned_edge=LEFT)
+        full_avg = VGroup(full_frac, full_value)
+        fix_to_screen(full_avg)
+        full_avg.align_to(word_mob, UP).to_edge(RIGHT, buff=1)
+        num_end = len(str(total_bits)) + 4
+        word_start = num_end + 4
+        word_end = word_start + len(full_word)
+        label_copy = bits_label.copy()
+        self.play(
+            AnimationGroup(
+                label_copy.animate(path_arc=PI * 0.3).match_width(full_frac[:num_end]).move_to(full_frac[:num_end]),
+                GrowFromCenter(full_frac[num_end]),
+                AnimationGroup(
+                    TransformFromCopy(word_mob, full_frac[word_start:word_end], path_arc=PI * 0.3),
+                    FadeIn(VGroup(full_frac[num_end + 1:word_start], full_frac[word_end:])),
+                    lag_ratio=0.6
+                ),
+                Write(full_value),
+                lag_ratio=0.5
+            )
+        )
+        self.add(full_avg)
+        self.remove(label_copy)
+        self.wait()
