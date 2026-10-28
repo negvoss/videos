@@ -961,7 +961,7 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
         pre_dec_label = dec_labels[ord("t") - ord("a")]
 
         self.play(
-            frame.animate.scale(1/1.1),
+            frame.animate.scale(1 / 1.1),
             VFadeOut(x_dec),
             x_tracker.animate.set_value(unit_interval.p2n(layer.bars[19].get_center())),
             run_time=2
@@ -1041,7 +1041,6 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
         p_math.to_edge(UP, buff=1)
         self.play(FadeIn(p_math, UP))
         self.wait()
-
 
         # Zoom in on the "m"
         show_model = True
@@ -1214,6 +1213,7 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
 
         # Track the word as the x value changes
         word_opacity_tracker = ValueTracker(0)
+
         def get_word_mob(word):
             mob = Text(f"|{word.replace(" ", "_")}|").set_height(0.7)
             mob.to_edge(UP, buff=1.3)
@@ -1903,7 +1903,6 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
             )
             self.wait()
 
-
         self.play(FadeOut(VGroup(bits_brace, bits_label, avg_bits_per_char)))
 
         # Helpers for extending the word
@@ -2117,7 +2116,7 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
         label = brace.get_tex(R"\approx 2^{-18}")
         self.play(
             AnimationGroup(
-                self.camera.frame.animate(run_time=1).scale(1.035).shift(DOWN*0.6),
+                self.camera.frame.animate(run_time=1).scale(1.035).shift(DOWN * 0.6),
                 AnimationGroup(
                     GrowFromEdge(brace, UP, run_time=1.4),
                     Write(label, run_time=1.4),
@@ -3473,7 +3472,6 @@ class EuclidInContextQwen(ShowEncodingScene):
         self.play(Write(bits_per_char), run_time=2)
 
 
-
 class USConstitutionQwen(ShowEncodingScene):
     text = """
         We the People of the United States,
@@ -3536,6 +3534,7 @@ class Alphabets(InteractiveScene):
             run_time=2
         )
         self.wait()
+
 
 class LuckyAndVeryLucky(InteractiveScene):
     def construct(self):
