@@ -52,9 +52,10 @@ class Spheres(InteractiveScene):
 
         # Move them to random locations
         self.set_camera_target_position(55, 49, 0, (-0.51, -0.61, -0.09), 13.62, drift_time=2.9)
+
         def get_random_sphere_location():
             gaussian_point = np.random.normal(0, 1, 3)
-            return gaussian_point / np.linalg.norm(gaussian_point) * R * (random.random() ** (1/3))
+            return gaussian_point / np.linalg.norm(gaussian_point) * R * (random.random() ** (1 / 3))
         VGroup(sphere1, sphere2).set_opacity(0)
         np.random.seed(2)
         for _ in range(3):
@@ -71,13 +72,14 @@ class Spheres(InteractiveScene):
             w = w / d
             w_perp_1 = np.cross(w, (0, 0, 1))
             w_perp_2 = np.cross(w, w_perp_1)
+
             def get_coords(u, v):
-                circle_center = sphere1.get_center() + w*u
+                circle_center = sphere1.get_center() + w * u
                 if u < d / 2:
                     r = np.sqrt(R**2 - (d - u)**2)
                 else:
                     r = np.sqrt(R**2 - u**2)
-                offset = r*np.cos(v)*w_perp_1 + r*math.sin(v)*w_perp_2
+                offset = r * np.cos(v) * w_perp_1 + r * math.sin(v) * w_perp_2
                 return circle_center + offset
 
             return ParametricSurface(
@@ -112,7 +114,7 @@ class Spheres(InteractiveScene):
             x_range=(-2, 2, 1),
             y_range=(-2, 2, 1),
             z_range=(-2, 2, 1)
-        ).set_width(4*R)
+        ).set_width(4 * R)
         axes_opacity_tracker = ValueTracker(0)
         axes.add_updater(lambda m: m.set_opacity(axes_opacity_tracker.get_value()))
 
@@ -135,7 +137,7 @@ class Spheres(InteractiveScene):
             for label in axis_labels:
                 look_at_camera(label)
         self.add(axes, coordinate_labels)
-        get_random_sphere_location_2 = lambda: get_random_sphere_location() * 2
+        def get_random_sphere_location_2(): return get_random_sphere_location() * 2
         sphere1, sphere2 = sphere2, sphere1
         intersection_opacity_tracker = ValueTracker(1)
         intersection.add_updater(lambda m: m.set_opacity(intersection_opacity_tracker.get_value()))
@@ -173,11 +175,13 @@ class Spheres(InteractiveScene):
         # Pick one of them
         sphere2.move_to([1.7, 1.6, 1.2])
         dot_opacity_tracker = ValueTracker(1)
+
         def get_line():
             v = sphere2.get_center() - axes.c2p(0, 0, 0)
             v = v / np.linalg.norm(v) * np.linalg.norm(axes.c2p(2, 0, 0))
             return DashedLine(axes.c2p(0, 0, 0), v, buff=0, stroke_width=1)
         line = always_redraw(get_line)
+
         def get_line_label():
             v = sphere2.get_center() - axes.c2p(0, 0, 0)
             v = v / np.linalg.norm(v) * np.linalg.norm(axes.c2p(2, 0, 0))
@@ -216,7 +220,6 @@ class Spheres(InteractiveScene):
         for _ in range(60):
             sphere2.move_to(get_random_sphere_location_2())
             self.wait(0.3)
-
 
     def set_camera_target_position(
         self,
