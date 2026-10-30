@@ -4699,3 +4699,384 @@ class USConstitutionWithDiagram(InteractiveScene):
         with open(cache_path, "w") as fp:
             json.dump(dict(steps=steps, pieces=pieces), fp)
         return steps, pieces
+
+
+class InitialConstitutionExample(InteractiveScene):
+    n_first_bits = 31
+
+    def construct(self):
+        # Write the first part of the preamble
+        frame = self.frame
+        first_str = "We the People of the United States,"
+        rest_str = " ".join("""
+            in Order to form a more perfect Union,
+            establish Justice, insure domestic Tranquility,
+            provide for the common defence,
+            promote the general Welfare,
+            and secure the Blessings of Liberty to ourselves and our Posterity,
+            do ordain and establish this Constitution for the United States of America.
+        """.split())
+
+        line_width = Text(first_str).get_width()
+        lines = [first_str]
+        current = []
+        for word in rest_str.split():
+            if current and Text(" ".join([*current, word])).get_width() > line_width:
+                lines.append(" ".join(current))
+                current = []
+            current.append(word)
+        lines.append(" ".join(current))
+
+        paragraph = Text("\n".join(lines), alignment="LEFT")
+        n_first = len("".join(first_str.split()))
+        first_part = paragraph[:n_first]
+        rest_part = paragraph[n_first:]
+        rest_part.set_color(YELLOW)
+        paragraph.set_width(FRAME_WIDTH - 1)
+        paragraph.shift(-first_part.get_center())
+
+        self.play(ShowIncreasingSubsets(first_part, rate_func=linear, run_time=2.5))
+        self.wait()
+
+        # Zoom out while writing the rest
+        def get_fit_scale(mob, margin=1.0):
+            return max(
+                (mob.get_width() + 2 * margin) / FRAME_WIDTH,
+                (mob.get_height() + 2 * margin) / FRAME_HEIGHT,
+            )
+
+        para_scale = get_fit_scale(paragraph)
+        self.play(
+            frame.animate.set_height(para_scale * FRAME_HEIGHT).move_to(paragraph).set_anim_args(time_span=(0, 2.5)),
+            ShowIncreasingSubsets(rest_part, rate_func=linear, run_time=8),
+        )
+        self.remove(first_part, rest_part)
+        self.add(paragraph)
+        self.wait()
+
+        # Show the probability of the yellow part
+        brace = Brace(rest_part, RIGHT, buff=0.25 * para_scale)
+        brace.stretch(para_scale, 0)
+        chance_label = Tex(R"\approx 50\% \text{ chance}", font_size=48 * para_scale)
+        chance_label.next_to(brace, RIGHT, buff=0.25 * para_scale)
+        bit_label = Tex(R"\approx 1 \text{ bit}", font_size=48 * para_scale)
+        bit_label.next_to(chance_label, DOWN, buff=0.5 * para_scale, aligned_edge=LEFT)
+
+        full_group = Group(paragraph, brace, chance_label, bit_label)
+        full_scale = get_fit_scale(full_group, margin=0.75)
+        self.play(
+            frame.animate.set_height(full_scale * FRAME_HEIGHT).move_to(full_group),
+            GrowFromCenter(brace),
+            first_part.animate.set_opacity(0.35),
+            FadeIn(chance_label, shift=0.25 * para_scale * RIGHT),
+            run_time=1.5,
+        )
+        self.wait()
+        self.play(FadeIn(bit_label, shift=0.25 * para_scale * DOWN))
+        self.wait(2)
+        self.play(FadeOut(VGroup(brace, chance_label, bit_label)))
+
+        # Move the text to the left
+        frame_width = frame.get_width()
+        frame_left = frame.get_left()[0]
+        para_target = paragraph.copy()
+        para_target.set_width(0.42 * frame_width)
+        para_target.move_to(np.array([frame_left + 0.04 * frame_width + para_target.get_width() / 2, frame.get_y(), 0]))
+        para_target[:n_first].set_opacity(1)
+        arrow = Arrow(
+            para_target.get_right() + 0.03 * frame_width * RIGHT,
+            para_target.get_right() + 0.14 * frame_width * RIGHT,
+            buff=0,
+            thickness=4 * full_scale,
+        )
+        self.play(
+            AnimationGroup(
+                Transform(paragraph, para_target),
+                GrowArrow(arrow),
+                lag_ratio=0.4
+            ),
+            run_time=1.5
+        )
+
+        # Turn the text into bits
+        n_bits = self.n_first_bits + 1
+        zeros = Text("0" * n_bits, font="Consolas")
+        ones = Text("1" * n_bits, font="Consolas")
+        bit_area_left = arrow.get_right()[0] + 0.03 * frame_width
+        bit_area_width = frame.get_right()[0] - 0.04 * frame_width - bit_area_left
+        split = (n_bits + 1) // 2
+        row_shift = (zeros[split].get_x() - zeros[0].get_x()) * LEFT + 1.6 * zeros.get_height() * DOWN
+        for mob in (zeros, ones):
+            mob[split:].shift(row_shift)
+            mob.refresh_bounding_box(recurse_down=True)
+            mob.set_width(bit_area_width)
+            mob.move_to(np.array([bit_area_left + bit_area_width / 2, frame.get_y(), 0]))
+        slots = VGroup(VGroup(zero, one) for zero, one in zip(zeros, ones))
+        slots[-1].set_color(YELLOW)
+        bits = slots
+
+        rng = np.random.default_rng(0)
+        for slot in slots:
+            slot.state = int(rng.integers(0, 2))
+            slot.revealed = False
+            slot.set_opacity(0)
+
+        def show_slot(slot):
+            slot[0].set_opacity(1 - slot.state)
+            slot[1].set_opacity(slot.state)
+
+        def randomize_bits():
+            for slot in slots:
+                if slot.revealed:
+                    slot.state = int(rng.integers(0, 2))
+                    show_slot(slot)
+
+        flip_state = dict(time=0)
+
+        def update_bits(mob, dt):
+            flip_state["time"] += dt
+            if flip_state["time"] > 0.1:
+                flip_state["time"] = 0
+                randomize_bits()
+
+        def get_arrival(source, slot):
+            starts = []
+            ends = []
+            for glyph in slot:
+                start = source.copy()
+                end = glyph.copy().set_opacity(1)
+                start.align_data_and_family(end)
+                starts.append(start)
+                ends.append(end)
+
+            def update(mob, alpha):
+                mob.become(starts[slot.state])
+                mob.interpolate(starts[slot.state], ends[slot.state], alpha)
+                if alpha >= 1:
+                    mob.set_opacity(0)
+                    if not slot.revealed:
+                        slot.revealed = True
+                        show_slot(slot)
+
+            return UpdateFromAlphaFunc(source.copy(), update)
+
+        def get_arrivals(sources, targets):
+            n = max(len(sources), len(targets))
+            return [
+                get_arrival(sources[k * len(sources) // n], targets[k * len(targets) // n])
+                for k in range(n)
+            ]
+
+        white_arrivals = get_arrivals(paragraph[:n_first], slots[:-1])
+        yellow_arrivals = get_arrivals(paragraph[n_first:], slots[-1:])
+        bits.add_updater(update_bits)
+        self.add(bits)
+        self.play(
+            LaggedStart(*white_arrivals, lag_ratio=0.05, run_time=2),
+            AnimationGroup(*yellow_arrivals, run_time=2),
+        )
+        self.remove(*(anim.mobject for anim in [*white_arrivals, *yellow_arrivals]))
+        self.wait(10)
+
+
+class CharacterCodeScene(InteractiveScene):
+    title = "Code"
+    alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .,'!?"
+    chars_per_second = 22
+    bits_per_line = 56
+    bit_colors = (WHITE, GREY_C)
+    table_color = TEAL
+
+    def get_codes(self):
+        raise NotImplementedError
+
+    def construct(self):
+        # Set up the code table
+        codes = self.get_codes()
+        alphabet = self.alphabet
+        text = " ".join("""
+            We the People of the United States,
+            in Order to form a more perfect Union,
+            establish Justice, insure domestic Tranquility,
+            provide for the common defence,
+            promote the general Welfare,
+            and secure the Blessings of Liberty to ourselves and our Posterity,
+            do ordain and establish this Constitution for the United States of America.
+        """.split())
+
+        columns = [
+            [char for char in alphabet if char.islower()],
+            [char for char in alphabet if char.isupper()],
+            [char for char in alphabet if not char.isalpha()],
+        ]
+        n_rows = max(len(column) for column in columns)
+        row_step = 6.4 / (n_rows - 1)
+        col_step = 2.1
+        row_by_char = dict()
+        for col, column in enumerate(columns):
+            for row, char in enumerate(column):
+                baseline = 2.88 - row * row_step
+                char_text = Text("x" + ("_" if char == " " else char), font_size=19)
+                char_text.shift((baseline - char_text[0].get_bottom()[1]) * UP)
+                char_mob = char_text[1]
+                char_mob.set_x(col * col_step)
+                code_mob = Text(codes[char], font="Consolas", font_size=20)
+                code_mob.move_to(np.array([col * col_step + 0.3, 0, 0]), LEFT)
+                code_mob.shift((baseline - code_mob.get_bottom()[1]) * UP)
+                row_by_char[char] = VGroup(char_mob, code_mob)
+        rows = VGroup(*(row_by_char[char] for char in alphabet))
+        rows.set_color(self.table_color)
+        rows.set_x((-FRAME_WIDTH / 2 - 0.9) / 2)
+
+        title = Text(self.title, font_size=40)
+        title.move_to(np.array([rows.get_x(), 3.55, 0]))
+        divider = Line(4 * UP, 4 * DOWN).set_stroke(GREY_B, 1)
+        divider.set_x(-0.9)
+        self.add(title, divider, rows)
+
+        # Set up the text and bits
+        right_center = (divider.get_x() + FRAME_WIDTH / 2) / 2
+        right_width = 7.0
+        lines = []
+        current = []
+        for word in text.split():
+            if current and Text(" ".join([*current, word]), font_size=24).get_width() > right_width:
+                lines.append(" ".join(current))
+                current = []
+            current.append(word)
+        lines.append(" ".join(current))
+        text_mob = Text("\n".join(lines), font_size=24, alignment="LEFT")
+        text_mob.move_to(np.array([right_center, 3.6, 0]), UP)
+        glyph_counts = [0]
+        for char in text:
+            glyph_counts.append(glyph_counts[-1] + (0 if char.isspace() else 1))
+
+        arrow = Arrow(0.4 * UP, 0.4 * DOWN, buff=0, thickness=4)
+        arrow.move_to(np.array([right_center, text_mob.get_bottom()[1] - 0.6, 0]))
+
+        bit_string = "".join(codes[char] for char in text)
+        bit_char_index = [index for index, char in enumerate(text) for _ in codes[char]]
+        bit_ends = [0]
+        for char in text:
+            bit_ends.append(bit_ends[-1] + len(codes[char]))
+        bit_lines = VGroup(
+            Text(bit_string[i:i + self.bits_per_line], font="Consolas", font_size=20)
+            for i in range(0, len(bit_string), self.bits_per_line)
+        )
+        line_step = 1.6 * bit_lines[0].get_height()
+        bits_top = arrow.get_bottom()[1] - 0.3
+        if bit_lines[0].get_width() > right_width:
+            line_step *= right_width / bit_lines[0].get_width()
+            bit_lines.scale(right_width / bit_lines[0].get_width())
+        bits_left = right_center - bit_lines[0].get_width() / 2
+        for i, line in enumerate(bit_lines):
+            line.move_to(np.array([bits_left, bits_top - i * line_step, 0]), UL)
+        bit_glyphs = [glyph for line in bit_lines for glyph in line]
+        for glyph, char_index in zip(bit_glyphs, bit_char_index):
+            glyph.set_color(self.bit_colors[char_index % 2])
+        glyph_lines = [i for i, line in enumerate(bit_lines) for _ in line]
+        max_lines = int((bits_top - (-3.8)) / line_step)
+
+        char_tracker = ValueTracker(0)
+        scroll = dict(offset=0.0)
+        text_display = VGroup()
+        bits_display = VGroup()
+
+        def update_text(mob):
+            n_chars = int(char_tracker.get_value())
+            mob.set_submobjects(list(text_mob[:glyph_counts[n_chars]]))
+
+        def update_bits(mob, dt):
+            n_chars = int(char_tracker.get_value())
+            n_bits = bit_ends[n_chars]
+            n_lines = math.ceil(n_bits / self.bits_per_line)
+            target = max(n_lines - max_lines, 0) * line_step
+            new_offset = scroll["offset"] + (target - scroll["offset"]) * min(1, 8 * dt)
+            bit_lines.shift((new_offset - scroll["offset"]) * UP)
+            scroll["offset"] = new_offset
+            first_line = int(new_offset / line_step)
+            visible = []
+            for glyph, line_index in zip(bit_glyphs[:n_bits], glyph_lines[:n_bits]):
+                if line_index >= first_line:
+                    visible.append(glyph)
+            for line in bit_lines[first_line:first_line + 2]:
+                line.set_opacity(clip((bits_top + 0.5 * line_step - line.get_y()) / line_step, 0, 1))
+            mob.set_submobjects(visible)
+
+        text_display.add_updater(update_text)
+        bits_display.add_updater(update_bits)
+        self.add(text_display, bits_display)
+        self.play(GrowArrow(arrow))
+
+        # Encode the text
+        def get_highlight(char_index):
+            row = rows[alphabet.index(text[char_index])]
+            return SurroundingRectangle(row, buff=0.05).set_stroke(YELLOW, 2)
+
+        def update_highlight(mob):
+            n_chars = int(char_tracker.get_value())
+            mob.become(get_highlight(max(n_chars - 1, 0)))
+            mob.set_stroke(opacity=float(n_chars > 0))
+
+        highlight = get_highlight(0)
+        highlight.add_updater(update_highlight)
+        self.add(highlight)
+        self.play(
+            char_tracker.animate.set_value(len(text)),
+            rate_func=linear,
+            run_time=len(text) / self.chars_per_second,
+        )
+        highlight.clear_updaters()
+        self.play(FadeOut(highlight))
+        self.wait(3)
+
+
+class ASCIIEncoding(CharacterCodeScene):
+    title = "ASCII"
+
+    def get_codes(self):
+        return {char: format(ord(char), "08b") for char in self.alphabet}
+
+
+class HuffmanEncoding(CharacterCodeScene):
+    title = "Huffman code"
+    lower_frequencies = dict(
+        e=12.70, t=9.06, a=8.17, o=7.51, i=6.97, n=6.75, s=6.33, h=6.09, r=5.99,
+        d=4.25, l=4.03, c=2.78, u=2.76, m=2.41, w=2.36, f=2.23, g=2.02, y=1.97,
+        p=1.93, b=1.29, v=0.98, k=0.77, j=0.15, x=0.15, q=0.095, z=0.074,
+    )
+    upper_frequencies = dict(
+        t=16.0, a=11.7, s=7.8, o=7.6, i=7.3, w=5.5, c=5.2, b=4.4, h=4.2, p=4.0,
+        f=4.0, m=3.8, d=3.2, r=2.8, e=2.8, l=2.4, n=2.3, g=1.6, u=1.2, v=0.8,
+        y=0.8, j=0.6, k=0.6, q=0.2, x=0.05, z=0.05,
+    )
+    other_frequencies = {" ": 0.18, ".": 0.0065, ",": 0.0061, "'": 0.0024, "!": 0.0003, "?": 0.0006}
+    lowercase_share = 0.76
+    uppercase_share = 0.025
+
+    def get_codes(self):
+        import heapq
+
+        lower_total = sum(self.lower_frequencies.values())
+        upper_total = sum(self.upper_frequencies.values())
+        frequencies = dict(self.other_frequencies)
+        for char, value in self.lower_frequencies.items():
+            frequencies[char] = self.lowercase_share * value / lower_total
+            frequencies[char.upper()] = self.uppercase_share * self.upper_frequencies[char] / upper_total
+
+        codes = {char: "" for char in self.alphabet}
+        groups = {index: [char] for index, char in enumerate(self.alphabet)}
+        heap = [(frequencies[char], index) for index, char in enumerate(self.alphabet)]
+        heapq.heapify(heap)
+        next_index = len(heap)
+        while len(heap) > 1:
+            p0, i0 = heapq.heappop(heap)
+            p1, i1 = heapq.heappop(heap)
+            for char in groups[i0]:
+                codes[char] = "0" + codes[char]
+            for char in groups[i1]:
+                codes[char] = "1" + codes[char]
+            groups[next_index] = groups.pop(i0) + groups.pop(i1)
+            heapq.heappush(heap, (p0 + p1, next_index))
+            next_index += 1
+        return codes
