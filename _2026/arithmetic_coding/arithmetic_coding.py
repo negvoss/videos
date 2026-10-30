@@ -19,8 +19,10 @@ def get_random_distribution(length):
 
 
 @lru_cache(maxsize=None)
-def cached_next_char_distribution(context):
-    return np.array(get_next_char_distribution(context), dtype=float)
+def cached_next_char_distribution(context, alphabet=CHAR_ALPHABET):
+    if alphabet == CHAR_ALPHABET:
+        return np.array(get_next_char_distribution(context), dtype=float)
+    return np.array(get_next_char_distribution(context, alphabet), dtype=float)
 
 
 class RenormalizeAnimation(MoveToTarget):
@@ -91,7 +93,31 @@ class ArithmeticCodingDiagram(Group):
         super().__init__(self.intervals, Point(), self.branches, self.layers)
 
     def get_distribution(self, prefix):
-        return cached_next_char_distribution(self.context + prefix).copy()
+        return cached_next_char_distribution(self.context + prefix, self.char_alphabet).copy()
+
+    def set_char_alphabet(self, char_alphabet):
+        self.char_alphabet = char_alphabet
+        self.char_labels_template = Text(char_alphabet)
+        for prefix, layer in list(self.layer_by_prefix.items()):
+            if getattr(layer, "is_branch", False):
+                del self.layer_by_prefix[prefix]
+        self.branches.set_submobjects([])
+
+        new_layers = []
+        for index, old_layer in enumerate(self.layers):
+            prefix = old_layer.prefix
+            if index == 0:
+                mob_above = self.unit_interval[0]
+            else:
+                mob_above = new_layers[-1].bars[char_alphabet.index(prefix[-1])]
+            new_layer = self.make_layer(prefix, mob_above)
+            new_layer.shift((old_layer.bars.get_y() - new_layer.bars.get_y()) * UP)
+            new_layer.highlight_state = "default"
+            new_layer.is_faded = getattr(old_layer, "is_faded", False)
+            self.update_bar_strokes(new_layer)
+            new_layers.append(new_layer)
+        self.layers.set_submobjects(new_layers)
+        return self
 
     def get_text_range(self, text):
         low, high = 0.0, 1.0
@@ -1256,20 +1282,30 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
         word_tracker.suspend_updating()
         word_tracker.become(get_word_mob("aaaa"))
         self.wait(0.25)
-        word_tracker.resume_updating()
 
         if False:
-            # Show infinitely long strings
+            # Switch to a cased alphabet and a monospace word tracker
             n_base_rows = len(diagram.layers)
             row_tracker = ValueTracker(n_base_rows)
-            extra_letter_tracker = ValueTracker(0)
-            align_tracker = ValueTracker(0)
-            word_lift_tracker = ValueTracker(0)
+            n_letters = 64
+            letter_fade_width = 6
+            letter_tracker = ValueTracker(0)
+            align_tracker = ValueTracker(1)
+            word_lift_tracker = ValueTracker(0.55)
             dots_opacity_tracker = ValueTracker(0)
             start_frame_height = frame.get_height()
             word_x_rel = (word_tracker.get_x() - frame.get_x()) / frame.get_width()
             word_y_rel = (word_tracker.get_y() - frame.get_y()) / frame.get_height()
             word_bottom_rel = (word_tracker.get_bottom()[1] - frame.get_y()) / frame.get_height()
+
+            def get_visible_layers():
+                return [
+                    layer for layer in diagram.layer_by_prefix.values()
+                    if getattr(layer, "is_visible", True) and not getattr(layer, "is_faded", False)
+                ]
+
+            def get_deepest_visible_layer():
+                return max(get_visible_layers(), key=lambda layer: len(layer.prefix))
 
             def decode_word(value, n_chars):
                 low = Fraction(0)
@@ -1287,11 +1323,10 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
                     word += diagram.char_alphabet[index]
                 return word
 
-            def update_long_word(mob):
-                n_chars = int(np.ceil(row_tracker.get_value() - 1e-6)) + int(extra_letter_tracker.get_value())
-                word = decode_word(get_x(), n_chars).replace(" ", "_")
+            def get_long_word():
+                word = decode_word(get_x(), n_letters)
                 scale = frame.get_height() / start_frame_height
-                new_mob = Text(f"|{word}|").set_height(0.7 * scale)
+                new_mob = Text(f"|{word}|", font="Consolas").set_height(0.5 * scale)
                 new_mob.remove(new_mob[0], new_mob[-1])
                 centered_x = frame.get_x() + word_x_rel * frame.get_width()
                 left_x = frame.get_left()[0] + 0.3 * scale + new_mob.get_width() / 2
@@ -1300,14 +1335,9 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
                     frame.get_y() + word_y_rel * frame.get_height() + word_lift_tracker.get_value() * scale,
                     0,
                 ]))
-                mob.become(new_mob)
-
-            def get_deepest_visible_layer():
-                visible = [
-                    layer for layer in diagram.layer_by_prefix.values()
-                    if getattr(layer, "is_visible", True) and not getattr(layer, "is_faded", False)
-                ]
-                return max(visible, key=lambda layer: len(layer.prefix))
+                for index, glyph in enumerate(new_mob):
+                    glyph.set_opacity(clip((letter_tracker.get_value() - index) / letter_fade_width, 0, 1))
+                return new_mob
 
             def update_rows(mob):
                 row_value = row_tracker.get_value()
@@ -1332,6 +1362,48 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
                     if getattr(layer, "is_branch", False) and len(prefix) >= n_base_rows and is_hidden:
                         del diagram.layer_by_prefix[prefix]
 
+            highlighter.suspend_updating()
+            old_layers = VGroup(*(
+                layer.copy()
+                for layer in sorted(get_visible_layers(), key=lambda layer: len(layer.prefix))
+            ))
+            old_main_layers = list(diagram.layers)
+            diagram.set_char_alphabet("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .,'!?")
+            self.remove(*(
+                mob
+                for layer in old_main_layers
+                for part in [layer, *getattr(layer, "stashed_submobjects", [])]
+                for mob in part.get_family()
+            ))
+            self.add(diagram.layers)
+            diagram.update_visible_path(get_x())
+            diagram.highlight_value(get_x())
+            new_layers = sorted(get_visible_layers(), key=lambda layer: len(layer.prefix))
+
+            long_word = get_long_word()
+            long_word.add_updater(lambda m: m.become(get_long_word()))
+            self.add(old_layers, long_word)
+            fade_lag = 0.8 / max(len(new_layers) - 1, 1)
+            self.play(
+                *(
+                    FadeOut(old_layer, time_span=(fade_lag * i, fade_lag * i + 1.2))
+                    for i, old_layer in enumerate(old_layers)
+                ),
+                *(
+                    FadeIn(new_layer, time_span=(fade_lag * i, fade_lag * i + 1.2))
+                    for i, new_layer in enumerate(new_layers)
+                ),
+                FadeOut(word_tracker),
+                run_time=2,
+            )
+            self.remove(old_layers, word_tracker)
+            word_tracker = long_word
+            highlighter.clear_updaters()
+            highlighter.add_updater(update_rows)
+            highlighter.resume_updating()
+            self.wait()
+
+            # Add infinitely many layers
             dots = Tex(R"\vdots", font_size=60)
 
             def update_dots(mob):
@@ -1339,10 +1411,6 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
                 mob.set_x(unit_interval.n2p(get_x())[0])
                 mob.set_fill(opacity=dots_opacity_tracker.get_value())
 
-            highlighter.clear_updaters()
-            highlighter.add_updater(update_rows)
-            word_tracker.clear_updaters()
-            word_tracker.add_updater(update_long_word)
             dots.add_updater(update_dots)
             self.add(dots)
 
@@ -1355,22 +1423,27 @@ class ArithmeticCodingExplanation(IntroduceCharacterModel):
             n_total_rows = n_base_rows
             while top_row_y - n_total_rows * row_step - 0.25 > new_bottom + 1.0:
                 n_total_rows += 1
-            rows_start = 2
-            rows_end = rows_start + 1
-            letters_end = rows_end + 1
 
             self.play(
-                x_tracker.animate.set_value(0.8).set_anim_args(rate_func=smooth),
-                frame.animate.set_height(new_height).set_y(new_y).set_anim_args(time_span=(1, 4)),
-                word_lift_tracker.animate.set_value(0.35).set_anim_args(time_span=(1, 4)),
-                row_tracker.animate.set_value(n_total_rows).set_anim_args(time_span=(rows_start, rows_end), rate_func=linear),
-                dots_opacity_tracker.animate.set_value(1).set_anim_args(time_span=(rows_end, rows_end + 0.5)),
-                align_tracker.animate.set_value(1).set_anim_args(time_span=(letters_end - 1.5, letters_end)),
-                extra_letter_tracker.animate.set_value(60).set_anim_args(time_span=(rows_end, letters_end), rate_func=rush_into),
-                run_time=letters_end + 10,
+                frame.animate.set_height(new_height).set_y(new_y).set_anim_args(time_span=(0, 2)),
+                row_tracker.animate.set_value(n_total_rows).set_anim_args(time_span=(0.5, 1.5), rate_func=linear),
+                dots_opacity_tracker.animate.set_value(1).set_anim_args(time_span=(1.5, 2)),
+                letter_tracker.animate.set_value(n_letters + letter_fade_width).set_anim_args(time_span=(0, 2), rate_func=linear),
+                run_time=2.5,
             )
+            self.wait()
+
+            # Track the infinite string
+            rng = np.random.default_rng(3)
+            self.play(x_tracker.animate.set_value(rng.uniform(0.75, 0.85)), run_time=10)
+            self.play(x_tracker.animate.set_value(rng.uniform(0.1, 0.2)), run_time=10)
+            self.wait(0.5)
+            for _ in range(50):
+                x_tracker.set_value(rng.uniform(0.01, 0.99))
+                self.wait(0.3)
         else:
             # Reset back to "math"
+            word_tracker.resume_updating()
             self.play(x_tracker.animate.set_value(math_value), run_time=4)
         self.wait()
 
